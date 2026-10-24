@@ -36,15 +36,18 @@ PRODUCT_STOP_WORDS = {
     "a", "as", "ao", "aos", "com", "da", "das", "de", "do", "dos", "e",
     "em", "para", "por", "sem", "um", "uma", "kit", "conjunto",
     "original", "novo", "nova", "olha", "esse", "essa", "isso",
+    # Generic marketplace placeholders do not identify a product category.
+    "produto", "produtos", "tipo",
 }
 
 _CONTEXT_FIELDS = (
     "productName", "category", "categoryName", "productCategory", "productType",
     "description", "usage", "useCase", "style", "appearance", "attributes",
 )
+_CATEGORY_FIELDS = ("category", "categoryName", "productCategory", "productType")
 _HASHTAG_CONTEXT_ALIASES = {
     "casa": {"casa", "cozinha", "bancada", "mesa", "sala", "quarto", "banheiro", "organizador", "utensilio", "decoracao"},
-    "cozinha": {"cozinha", "bancada", "utensilio", "preparo", "culinaria", "cozinhar"},
+    "cozinha": {"cozinha", "bancada", "utensilio", "preparo", "culinaria", "cozinhar", "descascador", "legumes", "vegetais"},
     "decor": {"decor", "decoracao", "sala", "quarto", "ambiente", "casa"},
     "decoracao": {"decor", "decoracao", "sala", "quarto", "ambiente", "casa"},
     "organizacao": {"organizacao", "organizador", "gaveta", "prateleira", "armazenamento", "casa", "cozinha"},
@@ -74,6 +77,9 @@ _GENERATION_REACTION_WORDS = {
 # high-impact agreement errors without pretending to be a full Portuguese
 # grammar engine.
 _GENDERED_PRODUCT_NOUNS = {
+    "escova": ("f", "s"), "escovas": ("f", "p"),
+    "descascador": ("m", "s"), "descascadores": ("m", "p"),
+    "apontador": ("m", "s"), "apontadores": ("m", "p"),
     "bolsa": ("f", "s"), "bolsas": ("f", "p"),
     "caneca": ("f", "s"), "canecas": ("f", "p"),
     "mesa": ("f", "s"), "mesas": ("f", "p"),
@@ -95,6 +101,20 @@ _GENDERED_PRODUCT_NOUNS = {
     "celular": ("m", "s"), "celulares": ("m", "p"),
     "fone": ("m", "s"), "fones": ("m", "p"),
 }
+_KNOWN_PRODUCT_HEAD_TERMS = (
+    (
+        set(_GENDERED_PRODUCT_NOUNS)
+        | {
+        "calcado", "calcados", "chinelo", "sandalia", "sapato", "tenis",
+        "bota", "sapatilha", "roupa", "vestuario", "luz", "abajur",
+        "luminaria", "lampada", "batom", "esmalte", "maquiagem",
+        "cosmetico", "unha", "skincare", "utensilio", "panela",
+        "frigideira", "talher", "mesa", "bancada", "escova", "escovas",
+        "descascador", "descascadores", "calcinhas", "calcinha", "tanga",
+        }
+    )
+    - {"apontador", "apontadores"}
+)
 _REACTION_ADJECTIVE_PARADIGMS = {
     "bonit": {("m", "s"): "bonito", ("m", "p"): "bonitos", ("f", "s"): "bonita", ("f", "p"): "bonitas"},
     "lind": {("m", "s"): "lindo", ("m", "p"): "lindos", ("f", "s"): "linda", ("f", "p"): "lindas"},
@@ -111,6 +131,9 @@ _REACTION_ADJECTIVE_BASE = {
     for form in paradigm.values()
 }
 _MAIN_CONTEXT_ALIASES = {
+    "descascar": {"descascador", "descascadores", "legumes", "vegetais"},
+    "vegetais": {"legumes", "descascador", "descascadores"},
+    "infantil": {"infantil", "menina", "menino", "crianca", "roupa"},
     "chinelo": {"calcado", "calcados", "uso", "casual"},
     "sandalia": {"calcado", "calcados", "uso", "casual"},
     "tenis": {"calcado", "calcados", "moda", "casual"},
@@ -121,10 +144,10 @@ _MAIN_CONTEXT_ALIASES = {
     "organizados": {"organizador", "organizacao"},
     "moda": {"feminino", "masculino", "casual", "tenis", "calcado", "sapato", "sandalia", "roupa", "vestuario"},
     "casa": {"cozinha", "bancada", "mesa", "sala", "quarto", "banheiro", "organizador", "utensilio"},
-    "cozinha": {"bancada", "utensilio", "preparo", "culinaria", "cozinhar"},
+    "cozinha": {"bancada", "utensilio", "preparo", "culinaria", "cozinhar", "descascador", "legumes", "vegetais"},
     "beleza": {"batom", "esmalte", "maquiagem", "cosmetico", "unha", "skincare"},
     "decoracao": {"decor", "sala", "quarto", "ambiente", "casa"},
-    "organizacao": {"organizador", "gaveta", "prateleira", "armazenamento", "casa", "cozinha"},
+    "organizacao": {"organizador", "gaveta", "prateleira", "armazenamento", "casa", "cozinha", "mesa"},
     "iluminacao": {"luz", "abajur", "luminaria", "lampada"},
 }
 
@@ -151,7 +174,12 @@ def _tokens(value: str) -> list[str]:
 def _product_phrases(product_name: str) -> set[str]:
     tokens = [token for token in _tokens(product_name) if token not in PRODUCT_STOP_WORDS]
     phrases: set[str] = set()
-    for size in (2, 3):
+    if len(tokens) == 2:
+        phrases.add(" ".join(tokens))
+    # A compact two-word category phrase can be the clearest accurate caption.
+    # Reject copied short titles and three-token listing fragments, not short
+    # category names drawn from richer Vision context.
+    for size in (3,):
         for index in range(0, max(0, len(tokens) - size + 1)):
             phrases.add(" ".join(tokens[index:index + size]))
     return phrases
@@ -205,6 +233,8 @@ def _brand_model_tokens(context: dict[str, Any] | None) -> set[str]:
                 "luz", "abajur", "luminaria", "lampada", "batom",
                 "esmalte", "maquiagem", "cosmetico", "unha", "skincare",
                 "utensilio", "panela", "frigideira", "talher", "organizador",
+                "escova", "escovas", "descascador", "descascadores",
+                "calcinha", "calcinhas", "tanga", "legumes", "multiuso",
             }
             # Older approved Vision rows may have only a product title and a
             # broad category. Recognize the category's product nouns before
@@ -267,6 +297,67 @@ def _context_tokens(product_name: str, product_context: dict[str, Any] | None) -
     return tokens
 
 
+def caption_product_anchor_terms(
+    product_context: dict[str, Any] | None,
+    *,
+    product_name: str = "",
+) -> tuple[str, ...]:
+    """Return the category/head terms a short caption should identify.
+
+    Vision's legacy records often contain only a product title plus IDs,
+    ratings, and an image URL. In that sparse case, the first meaningful title
+    term is the safest available product identity. Rich descriptions or usage
+    evidence can support a contextual reaction without forcing title wording.
+    """
+    context = product_context or {}
+    rich_fields = ("description", "usage", "useCase", "appearance", "attributes")
+    if any(str(context.get(key) or "").strip() for key in rich_fields):
+        return ()
+
+    category_terms: list[str] = []
+    for key in _CATEGORY_FIELDS:
+        for token in _tokens(str(context.get(key) or "")):
+            if token not in PRODUCT_STOP_WORDS and len(token) >= 3:
+                category_terms.append(token)
+    title = str(product_name or context.get("productName") or "")
+    excluded = _brand_model_tokens(context)
+    title_tokens = [
+        token for token in _tokens(title)
+        if token not in PRODUCT_STOP_WORDS and len(token) >= 3
+    ]
+    product_terms = [token for token in title_tokens if token in _KNOWN_PRODUCT_HEAD_TERMS]
+    return tuple(dict.fromkeys((*category_terms, *product_terms)))
+
+
+def _main_phrase_has_product_anchor(
+    words: list[str],
+    *,
+    product_name: str,
+    product_context: dict[str, Any] | None,
+) -> bool:
+    anchors = set(caption_product_anchor_terms(
+        product_context, product_name=product_name,
+    ))
+    if not anchors:
+        return True
+
+    expanded = set(anchors)
+    for term, related in _MAIN_CONTEXT_ALIASES.items():
+        if term in anchors:
+            expanded.update(related)
+        if related & anchors:
+            expanded.add(term)
+
+    def stem(token: str) -> str:
+        return token[:-1] if len(token) >= 5 and token.endswith(("a", "o", "e", "s")) else token
+
+    expanded_stems = {stem(token) for token in expanded}
+    return any(
+        _fold(word) in expanded or stem(_fold(word)) in expanded_stems
+        for word in words
+    )
+
+
 def _main_phrase_is_contextual(
     words: list[str],
     *,
@@ -314,6 +405,20 @@ def _has_known_agreement_error(words: list[str]) -> bool:
             continue
         _noun_index, noun = min(nouns, key=lambda candidate: abs(candidate[0] - adjective_index))
         if adjective[0] != noun[0] or (noun[1] is not None and adjective[1] != noun[1]):
+            return True
+    return False
+
+
+def _has_unlinked_product_nouns(words: list[str]) -> bool:
+    """Reject a string of product nouns with no natural relation between them."""
+    noun_positions = [
+        index for index, word in enumerate(words)
+        if _fold(word) in _GENDERED_PRODUCT_NOUNS
+    ]
+    if len(noun_positions) < 2:
+        return False
+    for left, right in zip(noun_positions, noun_positions[1:]):
+        if not any(_fold(word) in PRODUCT_STOP_WORDS for word in words[left + 1:right]):
             return True
     return False
 
@@ -421,7 +526,7 @@ def caption_generation_vocabulary(
 
     text_words: list[str] = []
     seen_text: set[str] = set()
-    for surface in (*grounded.values(), *_GENERATION_REACTION_WORDS):
+    for surface in (*grounded.values(), "de", "da", "do", "para", "com", "em", *_GENERATION_REACTION_WORDS):
         folded = _fold(surface)
         if folded not in seen_text:
             seen_text.add(folded)
@@ -481,6 +586,20 @@ def normalize_caption(
             corrections.append("unrelated_hashtag_removed")
             continue
         unique.append(tag)
+    if not unique:
+        grounded_context = dict(product_context or {})
+        if product_name and not grounded_context.get("productName"):
+            grounded_context["productName"] = product_name
+        _text_terms, grounded_hashtags = caption_generation_vocabulary(grounded_context)
+        for tag in grounded_hashtags:
+            if hashtag_context_score(
+                tag,
+                product_name=product_name,
+                product_context=grounded_context,
+            ) > 0:
+                unique.append(tag)
+                corrections.append("grounded_hashtag_inserted")
+                break
     if len(unique) > 2:
         ranked = sorted(
             enumerate(unique),
@@ -573,12 +692,25 @@ def validate_caption(
     words = WORD_RE.findall(main.replace("🧡", ""))
     if not 2 <= len(words) <= 3:
         raise CaptionPolicyError("texto principal deve conter 2 ou 3 palavras")
+    folded_words = [_fold(word) for word in words]
+    if len(folded_words) != len(set(folded_words)):
+        raise CaptionPolicyError("texto principal repete palavras")
     if not _main_phrase_is_contextual(
         words,
         product_name=product_name,
         product_context=product_context,
     ):
         raise CaptionPolicyError("texto principal contém termo sem suporte no contexto Vision")
+    if not _main_phrase_has_product_anchor(
+        words,
+        product_name=product_name,
+        product_context=product_context,
+    ):
+        raise CaptionPolicyError(
+            "texto principal não identifica a categoria ou o substantivo principal do produto"
+        )
+    if _has_unlinked_product_nouns(words):
+        raise CaptionPolicyError("texto principal combina substantivos de produto sem ligação natural")
     if _has_known_agreement_error(words):
         raise CaptionPolicyError("texto principal contém erro de concordância de gênero ou número")
 

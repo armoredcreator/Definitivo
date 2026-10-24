@@ -14,6 +14,7 @@ import requests
 from .base import AIProviderError
 from .context import context_text as _context_text
 from .transport import bounded_number, close_response, retryable_failure
+from ..caption.policy import caption_product_anchor_terms
 
 
 class GeminiProvider:
@@ -141,7 +142,7 @@ natural e não alterar o sentido do produto.
 
 PARA CADA OPÇÃO:
 - Português do Brasil.
-- Exatamente 2 ou 3 palavras no texto principal.
+- Exatamente 2 ou 3 palavras no texto principal; conectores curtos como "de", "para" e "tipo" podem deixar a frase natural.
 - Não gere emoji; a política central aplica o emoji fixo.
 - Exatamente 1 ou 2 hashtags.
 - Hashtags devem estar comprovadas pelo nome, categoria, uso ou descrição persistidos; não use tags genéricas sem relação demonstrável.
@@ -149,13 +150,21 @@ PARA CADA OPÇÃO:
 - NÃO use embalagem, tampa, frasco ou lacre.
 - NÃO use linguagem de venda, urgência, promoção ou desconto.
 - NÃO escreva marca, modelo, quantidade, medida, pH, voltagem ou especificação técnica.
-- NÃO copie uma expressão distintiva do título.
+- Preserve o substantivo principal. Uma frase curta que nomeie diretamente a categoria do produto é válida; não reproduza o título inteiro.
+- Se o título trouxer dois substantivos que descrevem o mesmo produto, conecte-os apenas de forma natural e apoiada pelo título, por exemplo "Descascador tipo apontador" para "Descascador de Legumes Apontador". Não substitua esses termos por forma, material ou benefício inventado.
 - Não use hashtags para contornar as regras.
 - Uma palavra genérica da categoria é permitida.
 
 Retorne SOMENTE JSON:
 {"captions":["opção 1","opção 2","..."]}
 """.strip()
+        anchors = caption_product_anchor_terms(context)
+        if anchors:
+            prompt += (
+                "\nO texto principal deve usar ao menos um destes termos de identidade: "
+                + ", ".join(anchors)
+                + "."
+            )
         policy_feedback = context.get("__policy_retry_feedback")
         if isinstance(policy_feedback, list) and policy_feedback:
             reasons = "; ".join(str(value) for value in policy_feedback[:8])

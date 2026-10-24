@@ -54,6 +54,91 @@ def test_policy_accepts_contextual_caption():
     ) == "🧡 Unhas organizadas\n#unhas #organizacao"
 
 
+def test_sparse_vision_context_requires_product_head_not_a_material_fragment():
+    context = {"productName": "Escovas de Aço Multiuso Kit 3 Pcs Aço Latão Nylon Cabo Plástico"}
+    with pytest.raises(CaptionPolicyError, match="substantivo principal"):
+        validate_caption(
+            "🧡 Latão bonito\n#latão",
+            product_name=context["productName"],
+            product_context=context,
+        )
+    assert _normalize_validate(
+        "Escovas bonitas\n#escovas",
+        product_name=context["productName"],
+        product_context=context,
+    ) == "🧡 Escovas bonitas\n#escovas"
+
+    peeler = {"productName": "Descascador de Legumes Apontador"}
+    with pytest.raises(CaptionPolicyError, match="substantivo principal"):
+        validate_caption(
+            "🧡 Apontador bonito\n#apontador",
+            product_name=peeler["productName"],
+            product_context=peeler,
+        )
+    assert _normalize_validate(
+        "Descascador bonito\n#legumes",
+        product_name=peeler["productName"],
+        product_context=peeler,
+    ) == "🧡 Descascador bonito\n#legumes"
+    assert _normalize_validate(
+        "Descascador tipo apontador\n#cozinha #legumes",
+        product_name=peeler["productName"],
+        product_context=peeler,
+    ) == "🧡 Descascador tipo apontador\n#cozinha #legumes"
+    with pytest.raises(CaptionPolicyError, match="sem suporte"):
+        validate_caption(
+            "🧡 Descascador em espiral\n#descascador",
+            product_name=peeler["productName"],
+            product_context=peeler,
+        )
+
+
+def test_policy_allows_short_direct_product_category_phrase():
+    context = {"productName": "Descascador de Legumes Apontador"}
+    assert _normalize_validate(
+        "Descascador de legumes\n#legumes",
+        product_name=context["productName"],
+        product_context=context,
+    ) == "🧡 Descascador de legumes\n#legumes"
+
+
+def test_normalizer_replaces_only_unrelated_hashtags_with_a_grounded_product_tag():
+    product_name = "Descascador de Legumes Apontador"
+    context = {"productName": product_name}
+    normalized = normalize_caption(
+        "Descascador de legumes #cozinhacriativa #praticidade",
+        product_name=product_name,
+        product_context=context,
+    )
+    assert normalized.caption == "🧡 Descascador de legumes\n#Descascador"
+    assert "grounded_hashtag_inserted" in normalized.corrections
+    assert validate_caption(
+        normalized.caption,
+        product_name=product_name,
+        product_context=context,
+    ) == normalized.caption
+
+
+def test_policy_rejects_repeated_product_word_as_an_unnatural_caption():
+    context = {"productName": "Descascador de Legumes Apontador"}
+    with pytest.raises(CaptionPolicyError, match="repete palavras"):
+        validate_caption(
+            "🧡 Descascador descascador descascador\n#descascador",
+            product_name=context["productName"],
+            product_context=context,
+        )
+
+
+def test_policy_rejects_unlinked_product_nouns():
+    context = {"productName": "Descascador de Legumes Apontador"}
+    with pytest.raises(CaptionPolicyError, match="sem ligação natural"):
+        validate_caption(
+            "🧡 Apontador descascador lindo\n#apontador",
+            product_name=context["productName"],
+            product_context=context,
+        )
+
+
 def test_policy_rejects_clear_gender_and_number_disagreement():
     context = {"productName": "Bolsa feminina tiracolo", "categoryName": "bolsas e acessórios"}
     with pytest.raises(CaptionPolicyError, match="concordância"):
@@ -290,13 +375,13 @@ def test_all_policy_rejections_retry_once_then_recovery(monkeypatch):
                 ]
             return [
                 "Compre cozinha 🔥\n#cozinha",
-                "Bancada suspensa ✨\n#cozinha",
+                "Bancada suspensa cozinha ✨\n#cozinha",
                 "Embalagem linda 😍✨\n#cozinha",
             ]
 
     provider = Provider()
     result = CaptionGenerator(provider=provider).generate_with_evidence({
-        "productName": "Bancada Suspensa",
+        "productName": "Bancada Suspensa Cozinha",
         "category": "cozinha",
         "usage": "cozinha prática",
     })
@@ -403,12 +488,13 @@ def test_policy_rejects_unsupported_product_attributes_even_when_hashtag_is_vali
         )
 
 
-def test_policy_does_not_treat_unrelated_long_hashtag_compounds_as_contextual():
+def test_policy_replaces_unrelated_long_hashtag_compounds_with_grounded_tag():
     result = normalize_caption(
         "Estilo leve 🧡\n#veraofashion",
         product_name="Chinelo feminino verão",
     )
-    assert result.caption == "🧡 Estilo leve"
+    assert result.caption == "🧡 Estilo leve\n#Chinelo"
+    assert "veraofashion" not in result.caption.casefold()
     with pytest.raises(CaptionPolicyError):
         validate_caption(result.caption, product_name="Chinelo feminino verão")
 
@@ -530,9 +616,9 @@ def test_policy_rejects_malformed_hashtags_extra_text_and_corrupted_unicode(capt
 def test_policy_detects_distinctive_phrase_when_title_stopwords_are_present():
     with pytest.raises(CaptionPolicyError, match="expressão distintiva"):
         validate_caption(
-            "🧡 Descascador de Legumes\n#cozinha",
-            product_name="Descascador de Legumes Apontador",
-            product_context={"categoryName": "cozinha utensílios"},
+            "🧡 Bolsa feminina tiracolo\n#bolsa",
+            product_name="Bolsa feminina tiracolo",
+            product_context={"categoryName": "moda"},
         )
 
 
@@ -634,15 +720,21 @@ def test_policy_is_strict_while_normalizer_records_safe_formatting_repairs():
     ) == result.caption
 
 
-def test_policy_rejects_unrelated_generic_hashtag_and_does_not_invent_replacement():
+def test_policy_replaces_unrelated_generic_hashtag_with_grounded_product_tag():
     result = normalize_caption(
         "Mesa bonita 🧡 #viral",
         product_name="Organizador de mesa",
     )
-    assert result.caption == "🧡 Mesa bonita"
-    assert result.corrections == ("unrelated_hashtag_removed", "orange_heart_moved_to_start")
-    with pytest.raises(CaptionPolicyError, match="1 ou 2 hashtags"):
-        validate_caption(result.caption, product_name="Organizador de mesa")
+    assert result.caption == "🧡 Mesa bonita\n#Organizador"
+    assert "#viral" not in result.caption
+    assert result.corrections == (
+        "unrelated_hashtag_removed",
+        "grounded_hashtag_inserted",
+        "orange_heart_moved_to_start",
+    )
+    assert validate_caption(
+        result.caption, product_name="Organizador de mesa",
+    ) == result.caption
 
 
 def test_normalizer_does_not_rewrite_words_or_repair_policy_content():

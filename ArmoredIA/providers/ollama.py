@@ -12,7 +12,7 @@ import requests
 from .base import AIProviderError
 from .context import context_text as _context_text
 from .transport import bounded_number, close_response, retryable_failure
-from ..caption.policy import caption_generation_vocabulary
+from ..caption.policy import caption_generation_vocabulary, caption_product_anchor_terms
 
 
 class OllamaProvider:
@@ -98,15 +98,19 @@ natural e não alterar o sentido do produto.
 
 PARA CADA OPÇÃO:
 - Português do Brasil.
-- Exatamente 2 ou 3 palavras no texto principal.
+- Exatamente 2 ou 3 palavras no texto principal; conectores curtos como "de", "para" e "tipo" podem deixar a frase natural.
+- Não repita nenhuma palavra no texto principal; a frase precisa ser uma expressão natural, não o nome repetido do produto.
 - NÃO inclua emoji; a política do código acrescenta sempre o coração laranja fixo 🧡.
 - Exatamente 1 ou 2 hashtags.
 - Hashtags devem estar comprovadas pelo nome, categoria, uso ou descrição persistidos; não use tags genéricas sem relação demonstrável.
 - Pelo menos uma palavra principal deve estar apoiada pelo contexto V1; toda palavra que sugira atributo ou benefício precisa de suporte explícito no contexto.
+- Quando o contexto não tiver descrição ou uso detalhado, a frase principal DEVE nomear o produto pela categoria ou pelo primeiro substantivo significativo do título. Não use apenas material, cor, marca, modelo ou reação genérica.
+- Não troque o substantivo principal por outro substantivo que apenas apareça no título; por exemplo, para "escovas de aço", não escreva uma legenda sobre "latão".
 - NÃO use embalagem, tampa, frasco ou lacre.
 - NÃO use linguagem de venda, urgência, promoção ou desconto.
 - NÃO escreva marca, modelo, quantidade, medida, pH, voltagem ou especificação técnica.
-- NÃO copie uma expressão distintiva do título.
+- Preserve o substantivo principal. Uma frase curta que nomeie diretamente a categoria do produto é válida; não reproduza o título inteiro.
+- Se o título trouxer dois substantivos que descrevem o mesmo produto, conecte-os apenas de forma natural e apoiada pelo título, por exemplo "Descascador tipo apontador" para "Descascador de Legumes Apontador". Não substitua esses termos por forma, material ou benefício inventado.
 - Não use hashtags para contornar as regras.
 - Uma palavra genérica da categoria é permitida.
 - Faça concordância natural de gênero e número: o adjetivo deve concordar com o substantivo que descreve.
@@ -139,6 +143,13 @@ Retorne SOMENTE um objeto JSON válido com a chave "captions". Cada item é um o
         )
 
         grounded_text_words, grounded_hashtags = caption_generation_vocabulary(context)
+        product_anchors = caption_product_anchor_terms(context)
+        if product_anchors:
+            prompt += (
+                "\nTermo(s) de identidade obrigatórios para aparecer no texto principal: "
+                + ", ".join(product_anchors)
+                + ". Use pelo menos um deles ou uma flexão natural; não publique uma frase sem o tipo de produto."
+            )
         rejected_title_terms: set[str] = set()
         title_tokens = [
             "".join(ch for ch in unicodedata.normalize("NFKD", token.casefold()) if not unicodedata.combining(ch))

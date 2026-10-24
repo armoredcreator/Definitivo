@@ -143,7 +143,7 @@ def test_ollama_policy_feedback_excludes_rejected_title_phrase_on_retry(monkeypa
     calls = []
     bodies = iter([
         {"response": json.dumps({"captions": [
-            {"text": "Alça fina", "hashtags": ["#alca"]}
+            {"text": "Alça fina infantil", "hashtags": ["#alca"]}
         ]})},
         {"response": json.dumps({"captions": [
             {"text": "Menina bonita", "hashtags": ["#menina"]}
