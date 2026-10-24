@@ -37,7 +37,10 @@ IGNORED_SOURCE_DIRS = {
 
 def test_repository_has_only_canonical_storage_roots():
     storage = ROOT / "storage"
-    assert storage.is_dir()
+    # Runtime state is ignored and does not exist in a clean clone until first use.
+    if not storage.exists():
+        assert "storage/" in (ROOT / ".gitignore").read_text(encoding="utf-8")
+        return
     actual = {
         path.relative_to(ROOT).as_posix()
         for path in storage.iterdir()
@@ -135,11 +138,12 @@ def test_runtime_build_scripts_are_present_and_web_discovery_is_not_installed():
     assert not (ROOT / "ArmoredSpeech" / "requirements-separation.txt").exists()
 
 
-def test_studio_asset_documentation_matches_committed_assets():
+def test_studio_asset_ownership_is_documented_without_versioning_private_audio():
     assets = ROOT / "ArmoredStudio" / "assets"
     assert (assets / "banner.png").is_file()
     assert not (assets / "efeitosonoro.wav").exists()
-    assert (ROOT / "ArmoredSpeech" / "assets" / "efeitosonoro.wav").is_file()
+    ignore_rules = (ROOT / ".gitignore").read_text(encoding="utf-8")
+    assert "ArmoredSpeech/assets/efeitosonoro.wav" in ignore_rules
     master_docs = list((ROOT / "docs").glob("*.md"))
     assert [path.name for path in master_docs] == ["ARMORED_CREATOR_DOCUMENTO_MESTRE.md"]
     master = master_docs[0].read_text(encoding="utf-8").lower()

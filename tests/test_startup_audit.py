@@ -175,39 +175,41 @@ class StartupAuditTests(unittest.TestCase):
             storage = Storage(root)
             source_id = "-1001002"
             previous_source_2 = os.environ.get("ARMORED_SOURCE_2_ID")
-            os.environ["ARMORED_SOURCE_2_ID"] = source_id
-            original = storage.original(
-                "77",
-                original_url="https://shopee.com.br/77",
-                source_id=source_id,
-            )
-            original.parent.mkdir(parents=True, exist_ok=True)
-            original.write_bytes(b"ORIGINAL")
+            try:
+                os.environ["ARMORED_SOURCE_2_ID"] = source_id
+                original = storage.original(
+                    "77",
+                    original_url="https://shopee.com.br/77",
+                    source_id=source_id,
+                )
+                original.parent.mkdir(parents=True, exist_ok=True)
+                original.write_bytes(b"ORIGINAL")
 
-            db = Database(storage.database / "armoredcreator.db")
-            item_id = db.create_item(
-                "77",
-                original,
-                source_id=source_id,
-                topic_id=902,
-                topic_name="source2",
-                original_url="https://shopee.com.br/77",
-            )
+                db = Database(storage.database / "armoredcreator.db")
+                try:
+                    db.create_item(
+                        "77",
+                        original,
+                        source_id=source_id,
+                        topic_id=902,
+                        topic_name="source2",
+                        original_url="https://shopee.com.br/77",
+                    )
+                    publisher = _Publisher()
+                    summary = StartupReconciler(db, storage, publisher).run()
 
-            publisher = _Publisher()
-            summary = StartupReconciler(db, storage, publisher).run()
-
-            assert summary["items"] == 1
-            assert summary["storage_workspaces"] == 1
-            assert summary["orphans"] == []
-            assert original.parent == (
-                root / "storage" / "videos" / f"{source_id}_77"
-            )
-            db.close()
-            if previous_source_2 is None:
-                os.environ.pop("ARMORED_SOURCE_2_ID", None)
-            else:
-                os.environ["ARMORED_SOURCE_2_ID"] = previous_source_2
+                    assert summary["items"] == 1
+                    assert summary["storage_workspaces"] == 1
+                    assert summary["orphans"] == []
+                    expected = root / "storage" / "videos" / f"{source_id}_77"
+                    assert original.parent.resolve() == expected.resolve()
+                finally:
+                    db.close()
+            finally:
+                if previous_source_2 is None:
+                    os.environ.pop("ARMORED_SOURCE_2_ID", None)
+                else:
+                    os.environ["ARMORED_SOURCE_2_ID"] = previous_source_2
 
 
 if __name__ == "__main__":
