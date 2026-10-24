@@ -1,0 +1,46 @@
+# Local Python environments and generated media/state; never commit them.
+.venv/
+videos/
+outputs/
+storage/
+ArmoredSpeech/runtime/cache/
+ArmoredSpeech/runtime/models/
+ArmoredSpeech/runtime/tmp/
+ArmoredSpeech/runtime/logs/
+ArmoredSpeech/samples/*
+!ArmoredSpeech/samples/README.md
+*.sqlite
+*.sqlite3
+*.db
+__pycache__/
+.pytest_cache/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Private/local ArmoredSpeech runtime resources; never commit RVC weights/indexes.
+ArmoredSpeech/runtime/rvc/
+
+# Private/local canonical Speech effect asset; provision outside Git.
+ArmoredSpeech/assets/efeitosonoro.wav
+
+# Private/local ArmoredStudio runtime resources; never commit binaries or model weights.
+ArmoredStudio/assets/efeitosonoro.wav
+ArmoredStudio/runtime/rvc/
+
+# Native Telegram Bot API executable and its local runtime state.
+runtime/telegram-bot-api/
+runtime/models/
+
+# Temporary test data and local validation scratch.
+work/
+storage/validation/
+
+# Local credentials, tokens, and Telegram account sessions are never tracked.
+credentials/
+.env
+.env.*
+!.env.example
+*.session
+*.session-journal

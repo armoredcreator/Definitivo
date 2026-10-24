@@ -1,0 +1,296 @@
+import os
+import hashlib
+import tempfile
+import unittest
+from unittest.mock import patch
+from pathlib import Path
+
+from ArmoredHub.service import ArmoredHub
+from armored_core.database import Database
+from armored_core.models import PublicationCheck, State
+from armored_core.services import PublicationUnknownError
+from armored_core.storage import Storage
+
+
+class HubContractTests(unittest.TestCase):
+    def _item(self, db, storage):
+        item_id = db.create_item(
+            "hub-test-1",
+            storage.original("hub-test-1"),
+            original_url="https://shopee.example/p/1",
+        )
+        original = storage.original(item_id)
+        original.parent.mkdir(parents=True, exist_ok=True)
+        original.write_bytes(b"SOURCE")
+        db.conn.execute(
+            "UPDATE items SET original_path=?, affiliate_name=?, affiliate_url=? WHERE content_id=?",
+            (str(original), "product", "https://shopee.example/abc/finaldomeulinknovo", item_id),
+        )
+        db.conn.commit()
+        item = db.get(item_id)
+        result = storage.result(item.content_id, item.affiliate_url, item.affiliate_name)
+        result.write_bytes(b"RESULT")
+        db.set_result(item.item_id, result)
+        return db.get(item.item_id)
+
+    def _ready_item(self, db, storage):
+        item = self._item(db, storage)
+        db.finalize_original_path(
+            item.item_id,
+            item.original_path,
+            hashlib.sha256(item.original_path.read_bytes()).hexdigest(),
+        )
+        item = db.get(item.item_id)
+        db.set_vision(
+            item.item_id,
+            "Produto para casa",
+            "https://s.shopee.com.br/affiliate",
+            publication_caption="Casa 🧡 bonita\n#casa",
+        )
+        db.transition(item.item_id, State.SPEECH, "test-speech-ready")
+        db.transition(item.item_id, State.STUDIO_BATCH, "test-studio-ready")
+        db.complete_speech_studio_batch({item.item_id: item.result_path})
+        return db.get(item.item_id)
+
+    def test_hub_uses_sqlite_not_parallel_state_folder(self):
+        old = os.environ.get("ARMORED_HUB_DRY_RUN")
+        os.environ["ARMORED_HUB_DRY_RUN"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                storage = Storage(root)
+                db = Database(storage.database / "db.sqlite")
+                item = self._item(db, storage)
+                db.publication_started(item.item_id)
+                hub = ArmoredHub(root, db)
+                self.assertEqual(hub.check_publication(item), PublicationCheck.UNKNOWN)
+
+                db.conn.execute("DELETE FROM publications WHERE content_id=?", (item.item_id,))
+                db.conn.commit()
+                item = db.get(item.item_id)
+                # Without Telegram credentials/configuration, absence cannot be
+                # proven. The safe result is UNKNOWN, never ABSENT.
+                self.assertEqual(hub.check_publication(item), PublicationCheck.UNKNOWN)
+                with self.assertRaises(RuntimeError):
+                    hub.publish(item)
+                # Dry run refuses before creating a fresh durable send intent.
+                self.assertIsNone(db.publication(item.item_id))
+                self.assertFalse((root / "hub").exists())
+                db.close()
+        finally:
+            if old is None:
+                os.environ.pop("ARMORED_HUB_DRY_RUN", None)
+            else:
+                os.environ["ARMORED_HUB_DRY_RUN"] = old
+
+    def test_unresolved_publication_reconciles_by_exact_result(self):
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                storage = Storage(root)
+                db = Database(storage.database / "db.sqlite")
+                item = self._item(db, storage)
+                db.publication_started(item.item_id)
+                hub = ArmoredHub(root, db)
+
+                hub._find_telegram_publications = lambda current: ["9876"]
+                self.assertEqual(hub.check_publication(item), PublicationCheck.CONFIRMED)
+                self.assertEqual(db.publication(item.item_id)["published_message_id"], "9876")
+                self.assertEqual(db.publication(item.item_id)["confirmed"], 1)
+                db.close()
+        finally:
+            pass
+
+
+    def test_unscoped_exact_publication_can_survive_missing_topic_metadata(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = Storage(root)
+            db = Database(storage.database / "db.sqlite")
+            try:
+                item = self._item(db, storage)
+                hub = ArmoredHub(root, db)
+
+                message = type(
+                    "Message",
+                    (),
+                    {
+                        "reply_to": None,
+                        "message": hub._historical_publication_text(item),
+                        "video": object(),
+                        "document": None,
+                    },
+                )()
+
+                self.assertFalse(
+                    hub._telegram_publication_matches(
+                        message, item, 901, topic_scoped=False
+                    )
+                )
+                self.assertTrue(
+                    hub._telegram_publication_matches(
+                        message, item, 901,
+                        topic_scoped=False,
+                        allow_unknown_topic=True,
+                    )
+                    )
+            finally:
+                db.close()
+
+    def test_unscoped_candidate_is_reverified_by_message_id(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = Storage(root)
+            db = Database(storage.database / "db.sqlite")
+            try:
+                item = self._item(db, storage)
+                db.publication_started(item.item_id)
+                hub = ArmoredHub(root, db)
+
+                calls = []
+                # Exercise the real candidate-reconciliation path. Discovery
+                # is replaced at the async boundary, while the candidate is
+                # still re-verified by its Telegram message ID.
+                with patch.dict(
+                    "os.environ",
+                    {
+                        "TELEGRAM_API_ID": "12345",
+                        "TELEGRAM_API_HASH": "test-hash",
+                        "ARMORED_HUB_TOPIC_ID": "901",
+                    },
+                    clear=False,
+                ), patch.object(
+                    hub, "_resolve_destination_chat_id", return_value="-100123"
+                ):
+                    def run_sync_without_leaking(coroutine):
+                        coroutine.close()
+                        return ["474"]
+
+                    hub._run_async = run_sync_without_leaking
+                    hub._verify_telegram_message = (
+                        lambda message_id, current: calls.append(message_id) or True
+                    )
+
+                    candidates = hub._find_telegram_publications(item)
+
+                    self.assertEqual(candidates, ["474"])
+                    self.assertEqual(calls, ["474"])
+
+                    # check_publication consumes the already-verified candidate;
+                    # it must not perform a second Telegram verification.
+                    hub._find_telegram_publications = lambda current: ["474"]
+                    self.assertEqual(
+                        hub.check_publication(item),
+                        PublicationCheck.CONFIRMED,
+                    )
+                    self.assertEqual(calls, ["474"])
+                    self.assertEqual(
+                        db.publication(item.item_id)["published_message_id"],
+                        "474",
+                    )
+            finally:
+                db.close()
+
+    def test_sent_unverified_without_evidence_stays_unknown_and_never_republishes(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = Storage(root)
+            db = Database(storage.database / "db.sqlite")
+            try:
+                item = self._ready_item(db, storage)
+                db.publication_started(item.item_id)
+                db.publication_send_started(item.item_id)
+                hub = ArmoredHub(root, db)
+                hub._find_telegram_publications = lambda current: []
+
+                with patch.dict(
+                    "os.environ",
+                    {
+                        "ARMORED_TELEGRAM_VERIFY_ATTEMPTS": "1",
+                        "ARMORED_TELEGRAM_VERIFY_RETRY_DELAY": "0",
+                    },
+                    clear=False,
+                ):
+                    self.assertEqual(
+                        hub.check_publication(item),
+                        PublicationCheck.UNKNOWN,
+                    )
+
+                    calls = {"publish": 0}
+
+                    def forbidden_publish(current):
+                        calls["publish"] += 1
+                        raise AssertionError("UNKNOWN publication must never be republished")
+
+                    hub.publish = forbidden_publish
+                    with self.assertRaises(PublicationUnknownError):
+                        hub.publish_once(item)
+
+                    self.assertEqual(calls["publish"], 0)
+                    row = db.publication(item.item_id)
+                    self.assertEqual(row["verification_status"], "SENT_UNVERIFIED")
+                    self.assertEqual(row["confirmed"], 0)
+            finally:
+                db.close()
+
+    def test_publish_once_does_not_preflight_fresh_publication(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = Storage(root)
+            db = Database(storage.database / "db.sqlite")
+            try:
+                item = self._ready_item(db, storage)
+                hub = ArmoredHub(root, db)
+                calls = {"check": 0, "publish": 0}
+
+                def forbidden_check(current):
+                    calls["check"] += 1
+                    raise AssertionError("fresh publication must not run Telegram preflight")
+
+                def fake_publish(current):
+                    calls["publish"] += 1
+                    return type("Result", (), {"confirmed": True, "message_id": "telegram-456"})()
+
+                hub.check_publication = forbidden_check
+                hub.publish = fake_publish
+
+                result = hub.publish_once(item)
+
+                self.assertTrue(result.confirmed)
+                self.assertEqual(result.message_id, "telegram-456")
+                self.assertEqual(calls["check"], 0)
+                self.assertEqual(calls["publish"], 1)
+
+                row = db.publication(item.item_id)
+                self.assertIsNotNone(row)
+                self.assertEqual(row["idempotency_key"], f"armoredcreator:content:{item.item_id}")
+                self.assertEqual(row["confirmed"], 0)
+            finally:
+                db.close()
+
+    def test_publish_once_uses_existing_confirmation_without_sending(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            storage = Storage(root)
+            db = Database(storage.database / "db.sqlite")
+            try:
+                item = self._ready_item(db, storage)
+                hub = ArmoredHub(root, db)
+                db.publication_started(item.item_id)
+                db.publication_message_sent(item.item_id, "telegram-123")
+                db.publication_confirmed(item.item_id, "telegram-123")
+
+                calls = {"publish": 0}
+                hub.publish = lambda current: calls.__setitem__("publish", calls["publish"] + 1)
+                hub.check_publication = lambda current: PublicationCheck.CONFIRMED
+                result = hub.publish_once(item)
+
+                self.assertTrue(result.confirmed)
+                self.assertEqual(result.message_id, "telegram-123")
+                self.assertEqual(calls["publish"], 0)
+            finally:
+                db.close()
+
+
+if __name__ == "__main__":
+    unittest.main()

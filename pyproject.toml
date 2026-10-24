@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "armoredcreator"
+version = "1.0.0"
+description = "Integrated Telegram discovery and sequential video production application"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "opencv-python-headless==4.10.0.84",
+    "python-dotenv>=1.0,<2",
+    "requests>=2.31,<3",
+    "telethon>=1.40,<2",
+    "python-telegram-bot>=22,<23",
+]
+
+[project.scripts]
+armoredcreator = "armored_core.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ArmoredSpeech*", "ArmoredStudio*", "ArmoredSync*", "ArmoredVision*", "ArmoredStock*", "ArmoredIA*", "ArmoredHub*", "armored_core*"]
+exclude = [".venv*", "venv*", ".git*", "__pycache__*", ".pytest_cache*", "build*", "dist*", "storage*", "credentials*", "ArmoredStudio.runtime*", "ArmoredSpeech.runtime*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["ArmoredSpeech/tests", "tests"]
+cache_dir = "storage/validation/.pytest_cache"
