@@ -148,3 +148,14 @@ def test_studio_asset_ownership_is_documented_without_versioning_private_audio()
     master = master_docs[0].read_text(encoding="utf-8").lower()
     assert "efeito de áudio" in master
     assert "armoredspeech/assets/efeitosonoro.wav" in master
+
+
+def test_real_telegram_e2e_requires_specific_publish_authorization_and_contract_route():
+    real_e2e = (ROOT / "tests" / "e2e" / "test_real_telegram.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'ARMORED_REAL_PUBLICATION_AUTHORIZED' in real_e2e
+    assert 'ARMORED_REAL_PUBLICATION_TOPIC_ID' in real_e2e
+    for topic_id in ("228", "1160", "1327"):
+        assert topic_id in real_e2e
+    assert "901" not in real_e2e

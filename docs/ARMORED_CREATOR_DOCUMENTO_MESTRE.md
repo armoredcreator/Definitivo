@@ -118,7 +118,7 @@ A raiz contém apenas os pontos de entrada, metadados do projeto e os diretório
 
 ### Limites da validação atual
 
-Testes automatizados e preflight local não substituem certificação real com os serviços externos. Nenhuma publicação nova é permitida sem autorização específica para a certificação do Definitivo; consultas comerciais permanecem condicionadas à quota/orçamento válido. Os recibos das publicações antigas são evidência histórica e nunca devem ser apagados para permitir republicação.
+Testes automatizados e preflight local não substituem certificação real com os serviços externos. O teste real `tests/e2e/test_real_telegram.py` também exige `ARMORED_REAL_TELEGRAM_E2E=1`, `ARMORED_REAL_PUBLICATION_AUTHORIZED=1` e `ARMORED_REAL_PUBLICATION_TOPIC_ID` com um dos destinos contratuais; ele pode publicar um item real uma única vez. Nenhuma publicação nova é permitida sem autorização específica para a certificação do Definitivo; consultas comerciais permanecem condicionadas à quota/orçamento válido. Os recibos das publicações antigas são evidência histórica e nunca devem ser apagados para permitir republicação.
 
 
 ### Evidência histórica de Speech → Studio

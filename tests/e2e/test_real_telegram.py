@@ -9,12 +9,28 @@ from armored_core.coordinator import Coordinator
 from armored_core.models import State
 
 
+ROUTE_TOPIC_BY_SOURCE_ID = {
+    "-1003788989075": 228,
+    "-1002698134896": 1160,
+    "-1002039708059": 1327,
+}
+
+
 class RealTelegramE2ETests(unittest.TestCase):
     """Opt-in real Telegram -> Vision -> Studio -> Hub -> Telegram test."""
 
     def test_real_telegram_full_pipeline(self):
         if os.getenv("ARMORED_REAL_TELEGRAM_E2E", "0") != "1":
             self.skipTest("ARMORED_REAL_TELEGRAM_E2E=1 required")
+        if os.getenv("ARMORED_REAL_PUBLICATION_AUTHORIZED", "0") != "1":
+            self.skipTest("explicit real-publication authorization required")
+
+        authorized_topic = (os.getenv("ARMORED_REAL_PUBLICATION_TOPIC_ID") or "").strip()
+        if authorized_topic not in {str(topic) for topic in ROUTE_TOPIC_BY_SOURCE_ID.values()}:
+            self.fail(
+                "ARMORED_REAL_PUBLICATION_TOPIC_ID must name one of the three "
+                "contract-authorized destinations"
+            )
 
         previous = {
             name: os.environ.get(name)
@@ -44,9 +60,6 @@ class RealTelegramE2ETests(unittest.TestCase):
             coordinator.close()
             self.fail("Missing real-E2E environment variables: " + ", ".join(missing))
 
-        topic_id = (os.getenv("ARMORED_HUB_TOPIC_ID") or "901").strip()
-        self.assertEqual(topic_id, "901", "Backup contract requires Telegram topic 901")
-
         source = coordinator.source
         item_id = None
 
@@ -55,6 +68,13 @@ class RealTelegramE2ETests(unittest.TestCase):
             self.assertIsNotNone(item_id, "Telegram source returned no eligible video")
 
             current = coordinator.db.get(str(item_id))
+            expected_topic = ROUTE_TOPIC_BY_SOURCE_ID.get(str(current.source_id))
+            self.assertIsNotNone(
+                expected_topic,
+                f"Source {current.source_id!r} is outside the Definitivo route contract",
+            )
+            self.assertEqual(int(current.topic_id), expected_topic)
+            self.assertEqual(expected_topic, int(authorized_topic))
             if current.state == State.FAILED:
                 coordinator.recover(str(item_id))
             else:
