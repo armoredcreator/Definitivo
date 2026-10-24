@@ -51,7 +51,6 @@ def test_repository_has_only_canonical_storage_roots():
         "storage/videos",
         "storage/logs",
         "storage/backups",
-        "storage/models",
         # Versioned Speech/Studio manifests and evidence belong in runtime storage.
         "storage/validation",
         # Source-separated workspaces are canonical runtime storage, not
