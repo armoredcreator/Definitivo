@@ -34,7 +34,7 @@ def _approved(
         item_id,
         "radio automotivo",
         f"https://s.shopee.com.br/affiliate-{message_id}",
-        publication_caption="🧡 Radio bonita\n#radio",
+        publication_caption="🧡 Radio bonito\n#radio",
         ia_context={"shopId": "10", "itemId": message_id, "productName": "radio automotivo"},
     )
     if state != State.RECEIVED:

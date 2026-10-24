@@ -182,6 +182,10 @@ class CaptionGenerator:
         guidance: list[str] = []
         if "2 ou 3 palavras" in text or "palavras" in text:
             guidance.append("Reescreva o texto principal com exatamente duas ou três palavras.")
+        if "concordância" in text:
+            guidance.append(
+                "Faça o adjetivo concordar em gênero e número com o substantivo do produto."
+            )
         if "coração" in text or "emoji" in text:
             guidance.append("Não produza emoji; o sistema centraliza o coração laranja na normalização.")
         if "hashtag" in text:

@@ -140,7 +140,7 @@ class FailOnceVision:
 
 class ValidIA:
     def generate_caption(self, _context):
-        return "🧡 Radio bonita\n#radio"
+        return "🧡 Radio bonito\n#radio"
 
     def generate_caption_with_evidence(self, context):
         from ArmoredIA.caption.generator import CaptionGenerationResult

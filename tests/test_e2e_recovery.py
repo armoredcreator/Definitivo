@@ -31,7 +31,7 @@ class Vision:
 
 class IA:
     def generate_caption(self, _context):
-        return "🧡 Radio bonita\n#radio"
+        return "🧡 Radio bonito\n#radio"
 
     def generate_caption_with_evidence(self, _context):
         from ArmoredIA.caption.generator import CaptionGenerationResult
@@ -257,7 +257,7 @@ class EndToEndRecoveryTests(unittest.TestCase):
             result = item.workspace / "600_result.mp4"
             result.write_bytes(b"READY-RESULT")
             coordinator.db.set_result(item_id, result)
-            coordinator.db.set_caption(item_id, "🧡 Radio bonita\n#radio")
+            coordinator.db.set_caption(item_id, "🧡 Radio bonito\n#radio")
             coordinator.db.transition(item_id, State.SPEECH, "test-v5-ready")
             coordinator.db.transition(item_id, State.STUDIO_BATCH, "test-v5-studio")
             coordinator.db.complete_speech_studio_batch({item_id: result})
@@ -312,7 +312,7 @@ class EndToEndRecoveryTests(unittest.TestCase):
                 "https://example.invalid/affiliate-601",
                 ia_context={"productName": "radio automotivo"},
             )
-            coordinator.db.set_caption(item_id, "🧡 Radio bonita\n#radio")
+            coordinator.db.set_caption(item_id, "🧡 Radio bonito\n#radio")
             coordinator.db.transition(item_id, State.SPEECH, "test-v5-ready")
             coordinator.db.transition(item_id, State.STUDIO_BATCH, "test-v5-studio")
             coordinator.db.transition(item_id, State.RECOVERY, "speech-studio-v5-failed:StudioError")

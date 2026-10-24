@@ -22,7 +22,7 @@ def make_item(**kwargs):
         result_path=Path("result.mp4"),
         affiliate_name="radio automotivo",
         affiliate_url="https://s.shopee.com.br/original",
-        publication_caption="🧡 Radio bonita\n#radio",
+        publication_caption="🧡 Radio bonito\n#radio",
     )
     base.update(kwargs)
     return Item(**base)
@@ -147,7 +147,7 @@ class HubPublicationPackageTests(unittest.TestCase):
                 db.set_vision(
                     item_id, "radio automotivo", "https://s.shopee.com.br/original",
                     ia_context={"productName": "radio automotivo"},
-                    publication_caption="🧡 Radio bonita\n#radio",
+                    publication_caption="🧡 Radio bonito\n#radio",
                 )
                 result_path = db.get(item_id).workspace / "result.mp4"
                 result_path.write_bytes(b"test-video")

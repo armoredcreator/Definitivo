@@ -69,6 +69,47 @@ _GENERATION_REACTION_WORDS = {
     "bonito", "bonita", "lindo", "linda", "charmoso", "charmosa",
     "elegante", "especial",
 }
+# Product nouns and the short reaction adjectives exposed to Ollama. The
+# caption has only two or three words, so a small morphology check catches
+# high-impact agreement errors without pretending to be a full Portuguese
+# grammar engine.
+_GENDERED_PRODUCT_NOUNS = {
+    "bolsa": ("f", "s"), "bolsas": ("f", "p"),
+    "caneca": ("f", "s"), "canecas": ("f", "p"),
+    "mesa": ("f", "s"), "mesas": ("f", "p"),
+    "cadeira": ("f", "s"), "cadeiras": ("f", "p"),
+    "blusa": ("f", "s"), "blusas": ("f", "p"),
+    "camisa": ("f", "s"), "camisas": ("f", "p"),
+    "sandalia": ("f", "s"), "sandalias": ("f", "p"),
+    "panela": ("f", "s"), "panelas": ("f", "p"),
+    "mochila": ("f", "s"), "mochilas": ("f", "p"),
+    "mascara": ("f", "s"), "mascaras": ("f", "p"),
+    "luminaria": ("f", "s"), "luminarias": ("f", "p"),
+    "chinelo": ("m", "s"), "chinelos": ("m", "p"),
+    # "tênis" has the same written form in singular and plural.
+    "tenis": ("m", None), "sapato": ("m", "s"), "sapatos": ("m", "p"),
+    "radio": ("m", "s"), "radios": ("m", "p"),
+    "sofa": ("m", "s"), "sofas": ("m", "p"),
+    "organizador": ("m", "s"), "organizadores": ("m", "p"),
+    "abajur": ("m", "s"), "abajures": ("m", "p"),
+    "celular": ("m", "s"), "celulares": ("m", "p"),
+    "fone": ("m", "s"), "fones": ("m", "p"),
+}
+_REACTION_ADJECTIVE_PARADIGMS = {
+    "bonit": {("m", "s"): "bonito", ("m", "p"): "bonitos", ("f", "s"): "bonita", ("f", "p"): "bonitas"},
+    "lind": {("m", "s"): "lindo", ("m", "p"): "lindos", ("f", "s"): "linda", ("f", "p"): "lindas"},
+    "charmos": {("m", "s"): "charmoso", ("m", "p"): "charmosos", ("f", "s"): "charmosa", ("f", "p"): "charmosas"},
+}
+_GENDERED_REACTION_ADJECTIVES = {
+    form: agreement
+    for paradigm in _REACTION_ADJECTIVE_PARADIGMS.values()
+    for agreement, form in paradigm.items()
+}
+_REACTION_ADJECTIVE_BASE = {
+    form: base
+    for base, paradigm in _REACTION_ADJECTIVE_PARADIGMS.items()
+    for form in paradigm.values()
+}
 _MAIN_CONTEXT_ALIASES = {
     "chinelo": {"calcado", "calcados", "uso", "casual"},
     "sandalia": {"calcado", "calcados", "uso", "casual"},
@@ -256,6 +297,68 @@ def _main_phrase_is_contextual(
     return grounded
 
 
+def _has_known_agreement_error(words: list[str]) -> bool:
+    """Reject clear gender/number mismatches in familiar product phrases."""
+    nouns = [
+        (index, _GENDERED_PRODUCT_NOUNS[_fold(word)])
+        for index, word in enumerate(words)
+        if _fold(word) in _GENDERED_PRODUCT_NOUNS
+    ]
+    adjectives = [
+        (index, _GENDERED_REACTION_ADJECTIVES[_fold(word)])
+        for index, word in enumerate(words)
+        if _fold(word) in _GENDERED_REACTION_ADJECTIVES
+    ]
+    for adjective_index, adjective in adjectives:
+        if not nouns:
+            continue
+        _noun_index, noun = min(nouns, key=lambda candidate: abs(candidate[0] - adjective_index))
+        if adjective[0] != noun[0] or (noun[1] is not None and adjective[1] != noun[1]):
+            return True
+    return False
+
+
+def _normalize_known_agreement(text: str) -> tuple[str, bool]:
+    """Safely inflect a known reaction adjective to match its product noun."""
+    matches = list(WORD_RE.finditer(text))
+    words = [match.group(0) for match in matches]
+    nouns = [
+        (index, _GENDERED_PRODUCT_NOUNS[_fold(word)])
+        for index, word in enumerate(words)
+        if _fold(word) in _GENDERED_PRODUCT_NOUNS
+    ]
+    if not nouns:
+        return text, False
+
+    replacements: list[tuple[int, int, str]] = []
+    for adjective_index, word in enumerate(words):
+        folded = _fold(word)
+        base = _REACTION_ADJECTIVE_BASE.get(folded)
+        if base is None:
+            continue
+        _noun_index, noun_form = min(
+            nouns, key=lambda candidate: abs(candidate[0] - adjective_index),
+        )
+        adjective_number = _GENDERED_REACTION_ADJECTIVES[folded][1]
+        desired = _REACTION_ADJECTIVE_PARADIGMS[base].get(
+            (noun_form[0], noun_form[1] or adjective_number),
+        )
+        if desired is not None and desired != folded:
+            match = matches[adjective_index]
+            # Keep initial capitalization while changing only a recognized
+            # inflection; accent and semantic content are otherwise stable.
+            if word[:1].isupper():
+                desired = desired.capitalize()
+            replacements.append((match.start(), match.end(), desired))
+
+    if not replacements:
+        return text, False
+    corrected = text
+    for start, end, replacement in reversed(replacements):
+        corrected = corrected[:start] + replacement + corrected[end:]
+    return corrected, True
+
+
 def hashtag_context_score(
     hashtag: str,
     *,
@@ -346,7 +449,7 @@ def normalize_caption(
     product_name: str = "",
     product_context: dict[str, Any] | None = None,
 ) -> CaptionNormalization:
-    """Apply formatting-only, auditable fixes. Never invent words or hashtags."""
+    """Apply safe, auditable formatting and known adjective-inflection fixes."""
     raw = str(caption or "")
     corrections: list[str] = []
     text = raw.replace("\r\n", "\n").replace("\r", "\n")
@@ -398,6 +501,9 @@ def normalize_caption(
     if without_emoji != main_without_heart:
         corrections.append("excess_emojis_removed")
     without_emoji = re.sub(r"\s+", " ", without_emoji).strip()
+    without_emoji, agreement_corrected = _normalize_known_agreement(without_emoji)
+    if agreement_corrected:
+        corrections.append("known_adjective_agreement_inflected")
     heart_at_start = _start_heart(without_emoji)
     raw_heart_count = raw.count("🧡")
     marker = "ARMORED_ORANGE_HEART_MARKER"
@@ -473,6 +579,8 @@ def validate_caption(
         product_context=product_context,
     ):
         raise CaptionPolicyError("texto principal contém termo sem suporte no contexto Vision")
+    if _has_known_agreement_error(words):
+        raise CaptionPolicyError("texto principal contém erro de concordância de gênero ou número")
 
     if not main.startswith("🧡 "):
         raise CaptionPolicyError("coração laranja deve estar no início da legenda")

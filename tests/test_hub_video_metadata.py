@@ -20,7 +20,7 @@ def _item(result_path: Path) -> Item:
         result_path=result_path,
         affiliate_name="radio automotivo",
         affiliate_url="https://s.shopee.com.br/test",
-        publication_caption="🧡 Radio bonita\n#radio",
+        publication_caption="🧡 Radio bonito\n#radio",
     )
 
 

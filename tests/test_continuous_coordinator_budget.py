@@ -126,7 +126,7 @@ class _Vision:
 
 class _IA:
     def generate_caption(self, _context):
-        return "🧡 Radio bonita\n#radio"
+        return "🧡 Radio bonito\n#radio"
 
 
 class _Hub:
@@ -204,7 +204,7 @@ def test_continuous_start_drains_publishing_v5_before_live_without_rerender(tmp_
         item_id, "radio automotivo", "https://affiliate.invalid/known",
         ia_context={"productName": "radio automotivo"},
     )
-    db.set_caption(item_id, "🧡 Radio bonita\n#radio")
+    db.set_caption(item_id, "🧡 Radio bonito\n#radio")
     item = db.get(item_id)
     output = storage.result(
         item_id, item.affiliate_url, item.affiliate_name, source_id=item.source_id

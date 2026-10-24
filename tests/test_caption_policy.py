@@ -54,6 +54,66 @@ def test_policy_accepts_contextual_caption():
     ) == "🧡 Unhas organizadas\n#unhas #organizacao"
 
 
+def test_policy_rejects_clear_gender_and_number_disagreement():
+    context = {"productName": "Bolsa feminina tiracolo", "categoryName": "bolsas e acessórios"}
+    with pytest.raises(CaptionPolicyError, match="concordância"):
+        validate_caption(
+            "🧡 Bolsas lindo\n#bolsas",
+            product_name=context["productName"],
+            product_context=context,
+        )
+    plural_context = {"productName": "Bolsa praia", "categoryName": "bolsas e acessórios"}
+    with pytest.raises(CaptionPolicyError, match="concordância"):
+        validate_caption(
+            "🧡 Bolsas linda\n#bolsas",
+            product_name=plural_context["productName"],
+            product_context=plural_context,
+        )
+    corrected = normalize_caption(
+        "🧡 Bolsas lindo\n#bolsas",
+        product_name=context["productName"],
+        product_context=context,
+    )
+    assert corrected.caption == "🧡 Bolsas lindas\n#bolsas"
+    assert "known_adjective_agreement_inflected" in corrected.corrections
+    assert validate_caption(
+        corrected.caption,
+        product_name=context["productName"],
+        product_context=context,
+    ) == corrected.caption
+
+    footwear = {"productName": "Tênis casual", "categoryName": "calçados"}
+    assert normalize_caption(
+        "🧡 Tênis bonita\n#tenis",
+        product_name=footwear["productName"],
+        product_context=footwear,
+    ).caption == "🧡 Tênis bonito\n#tenis"
+    assert normalize_caption(
+        "🧡 Tênis bonitos\n#tenis",
+        product_name=footwear["productName"],
+        product_context=footwear,
+    ).caption == "🧡 Tênis bonitos\n#tenis"
+
+
+def test_caption_generator_safely_inflects_known_agreement_before_policy():
+    class Provider:
+        def __init__(self):
+            self.calls = 0
+
+        def generate_candidates(self, task, context, limit):
+            self.calls += 1
+            return ["Bolsas lindo #bolsas"]
+
+    provider = Provider()
+    context = {"productName": "Bolsa feminina tiracolo", "categoryName": "bolsas e acessórios"}
+    result = CaptionGenerator(provider=provider).generate_with_evidence(context)
+
+    assert provider.calls == 1
+    assert result.caption == "🧡 Bolsas lindas\n#bolsas"
+    assert result.evaluations[0].policy_valid
+    assert "known_adjective_agreement_inflected" in result.evaluations[0].normalization_corrections
+
+
 def test_policy_allows_natural_overlap_with_description():
     assert _normalize_validate(
         "Cantinho resistente 🧡\n#casa",

@@ -18,7 +18,7 @@ class Vision:
 
 class ValidIA:
     def generate_caption(self, _context):
-        return "🧡 Radio bonita\n#radio"
+        return "🧡 Radio bonito\n#radio"
 
 class Studio:
     def __init__(self, storage):
@@ -100,7 +100,7 @@ class PipelineTests(unittest.TestCase):
             def generate_caption(self, context):
                 self.calls += 1
                 assert context["productName"] == "radio automotivo"
-                return "🧡 Radio bonita\n#radio"
+                return "🧡 Radio bonito\n#radio"
 
         ia = IA()
         import os
@@ -129,7 +129,7 @@ class PipelineTests(unittest.TestCase):
             p.run(self.item)
             row = self.db.get(self.item)
             self.assertEqual(row.state, State.PUBLISHED)
-            self.assertEqual(row.publication_caption, "🧡 Radio bonita\n#radio")
+            self.assertEqual(row.publication_caption, "🧡 Radio bonito\n#radio")
             self.assertEqual(ia.calls, 1)
         finally:
             if old_enabled is None:

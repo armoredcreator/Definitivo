@@ -19,7 +19,7 @@ class V:
 
 class IA:
     def generate_caption(self, _context):
-        return "🧡 Radio bonita\n#radio"
+        return "🧡 Radio bonito\n#radio"
 
 class S:
     def __init__(self, storage):
