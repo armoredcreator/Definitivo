@@ -128,6 +128,7 @@ def test_armored_stock_is_a_standalone_production_tool():
 
 def test_runtime_build_scripts_are_present_and_web_discovery_is_not_installed():
     assert (ROOT / "scripts" / "bootstrap.ps1").is_file()
+    assert not (ROOT / "scripts" / "install_unified_runtime.ps1").exists()
     assert (ROOT / "scripts" / "build_rvc311_wheel.py").is_file()
     assert not (ROOT / "requirements-web-discovery.txt").exists()
     assert not (ROOT / "ArmoredSpeech" / "requirements-analysis.txt").exists()

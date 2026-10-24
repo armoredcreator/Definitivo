@@ -92,7 +92,8 @@ Valide no `.venv` novo:
 4. Integridade SQLite: `PRAGMA quick_check` igual a `ok` e `PRAGMA foreign_key_check` vazio em cada banco copiado.
 5. Migração idempotente na cópia nova; confirmar estados, eventos, publicações, hashes e recibos preservados.
 6. Fluxo de descoberta/Vision sem criar pastas por item; provar materialização unitária em Stock e execução serial de Speech/Studio.
-7. Revisão de `git status` e arquivos ignorados para garantir que não haja credenciais, sessões, bancos, mídia ou modelos no Git.
+7. `python scripts/verify_installation.py` confirma branch, commit, árvore limpa e igualdade com `origin/main`; gera hashes SHA-256 dos arquivos versionados em `storage/validation/source-integrity.json` e recusa arquivos privados.
+8. Revisão de `git status` e arquivos ignorados para garantir que não haja credenciais, sessões, bancos, mídia ou modelos no Git.
 
 O projeto só deve ser declarado pronto quando a validação integrada e a instalação reproduzível forem aprovadas. Evidências transitórias de validação ficam em `storage/validation/` e não são versionadas. Este documento é a única documentação técnica do repositório; o README raiz é somente uma apresentação curta. Relatórios antigos do laboratório de áudio foram consolidados como evidência histórica abaixo e não são validação da versão Definitivo.
 
