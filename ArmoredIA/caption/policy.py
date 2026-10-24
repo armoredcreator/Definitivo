@@ -335,15 +335,9 @@ def caption_generation_vocabulary(
     return tuple(text_words[:64]), tuple(hashtags[:32])
 
 
-def _center_heart(main: str) -> str:
-    words = list(WORD_RE.finditer(main))
-    if not words:
-        return main.strip()
-    middle = (len(words) - 1) // 2
-    insertion = words[middle].end()
-    while insertion < len(main) and not main[insertion].isspace():
-        insertion += 1
-    return f"{main[:insertion].rstrip()} 🧡 {main[insertion:].lstrip()}"
+def _start_heart(main: str) -> str:
+    text = re.sub(r"\s+", " ", main.replace("🧡", " ")).strip()
+    return f"🧡 {text}" if text else "🧡"
 
 
 def normalize_caption(
@@ -404,7 +398,7 @@ def normalize_caption(
     if without_emoji != main_without_heart:
         corrections.append("excess_emojis_removed")
     without_emoji = re.sub(r"\s+", " ", without_emoji).strip()
-    centered = _center_heart(without_emoji)
+    heart_at_start = _start_heart(without_emoji)
     raw_heart_count = raw.count("🧡")
     marker = "ARMORED_ORANGE_HEART_MARKER"
     raw_main_with_marker = main.replace("🧡", marker)
@@ -412,10 +406,10 @@ def normalize_caption(
     raw_main_keep_heart = re.sub(r"\s+", " ", raw_main_keep_heart).strip()
     if raw_heart_count == 0:
         corrections.append("orange_heart_inserted")
-    elif raw_heart_count != 1 or centered != raw_main_keep_heart:
-        corrections.append("orange_heart_centered")
+    elif raw_heart_count != 1 or heart_at_start != raw_main_keep_heart:
+        corrections.append("orange_heart_moved_to_start")
 
-    normalized = centered
+    normalized = heart_at_start
     if unique:
         normalized += "\n" + " ".join("#" + tag for tag in unique)
     return CaptionNormalization(
@@ -480,10 +474,8 @@ def validate_caption(
     ):
         raise CaptionPolicyError("texto principal contém termo sem suporte no contexto Vision")
 
-    heart_source = re.sub(r"\s+", " ", main.replace("🧡", "").strip())
-    heart_centered = _center_heart(heart_source)
-    if heart_centered != main:
-        raise CaptionPolicyError("coração laranja fora da posição central")
+    if not main.startswith("🧡 "):
+        raise CaptionPolicyError("coração laranja deve estar no início da legenda")
 
     if _technical_leak(text):
         raise CaptionPolicyError("legenda revela medida ou especificação técnica")

@@ -226,7 +226,7 @@ def test_503_failure_then_restart_preserves_vision_original_and_state(tmp_path, 
         recovery.reconcile(item_id)
         item = db.get(item_id)
         assert item.state is State.SPEECH
-        assert item.publication_caption == "Casa 🧡 bonita\n#casa"
+        assert item.publication_caption == "🧡 Casa bonita\n#casa"
         assert speech_boundary == [item_id]
         assert len(calls) == 3
         assert item.original_path == original_path

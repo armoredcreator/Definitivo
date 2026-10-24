@@ -202,7 +202,7 @@ def test_publishing_without_definitive_telegram_result_is_blocked_but_absent_is_
     absent = db.reserve_item("2", "source", original_url="https://shopee.com.br/absent", original_path=original)
     for item_id in (unknown, absent):
         db.set_vision(item_id, "product", "https://affiliate.invalid/item", ia_context={"shopId": item_id, "itemId": "2"})
-        db.set_caption(item_id, "Teste produto 🧡 #teste")
+        db.set_caption(item_id, "🧡 Teste produto #teste")
         db.conn.execute("UPDATE items SET state='PUBLISHING' WHERE content_id=?", (item_id,))
     db.conn.execute(
         "INSERT INTO publications(content_id,idempotency_key,confirmed,verification_status) VALUES(?,?,?,?)",
@@ -239,7 +239,7 @@ def test_speech_v5_proof_preserves_audio_and_routes_only_valid_render_to_hub(
     db = Database(db_path)
     item = db.reserve_item("9", "source", original_url="https://shopee.com.br/product/90/20", original_path=original)
     db.set_vision(item, "product", "https://affiliate.invalid/item", ia_context={"shopId": "90", "itemId": "20"})
-    db.set_caption(item, "Teste produto 🧡 #teste")
+    db.set_caption(item, "🧡 Teste produto #teste")
     db.conn.execute(
         "UPDATE items SET state='STUDIO_COMPLETE',result_path=? WHERE content_id=?",
         (str(result) if has_result else None, item),
@@ -272,7 +272,7 @@ def test_missing_originals_are_classified_by_processing_need_and_valid_render_av
     )
     db.conn.execute("UPDATE items SET state='PUBLISHED' WHERE content_id=?", (published,))
     db.conn.execute("UPDATE items SET state='STUDIO_COMPLETE',affiliate_url=?,publication_caption=?,result_path=? WHERE content_id=?",
-                    ("https://affiliate.invalid/5", "Teste item 🧡 #teste", str(rendered), resumable))
+                    ("https://affiliate.invalid/5", "🧡 Teste item #teste", str(rendered), resumable))
     db.conn.execute(
         "INSERT INTO state_events(content_id,old_state,new_state,reason) VALUES(?,?,?,?)",
         (resumable, "STUDIO", "STUDIO_COMPLETE", "speech-studio-v5-complete"),

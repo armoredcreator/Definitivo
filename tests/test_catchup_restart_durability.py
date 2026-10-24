@@ -22,7 +22,7 @@ class _Vision:
 
 class _IA:
     def generate_caption(self, _context):
-        return "Radio 🧡 bonita\n#radio"
+        return "🧡 Radio bonita\n#radio"
 
 
 class _Studio:

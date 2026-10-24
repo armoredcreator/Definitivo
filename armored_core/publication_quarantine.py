@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -122,6 +123,51 @@ class PublicationQuarantine:
             )
             if tuple(existing) != expected:
                 raise RuntimeError("quarantined-publication-receipt-snapshot-changed")
+            conn.execute(
+                "INSERT INTO quarantine_evidence(content_id,observed_outcome,evidence_json) "
+                "VALUES(?, 'UNKNOWN', ?)",
+                (content_id, json.dumps(snapshot, ensure_ascii=False, sort_keys=True)),
+            )
+            conn.commit()
+            self._ids.add(content_id)
+        except BaseException:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def quarantine_legacy_missing_receipt(
+        self, item_id: str, *, evidence: dict[str, Any] | None = None,
+    ) -> None:
+        """Fence legacy PUBLISHING states that have no durable receipt.
+
+        The generated key is a local quarantine identity only; it is never
+        passed to Telegram or represented as an outbound idempotency key.
+        """
+        content_id = str(item_id)
+        key = "legacy-missing-receipt:" + hashlib.sha256(content_id.encode("utf-8")).hexdigest()
+        snapshot = {
+            "reason": "legacy-publishing-state-without-publication-receipt",
+            "item_state": (evidence or {}).get("item_state"),
+            "last_state_event": (evidence or {}).get("last_state_event"),
+            "publication_check": "UNKNOWN",
+            "quarantine_key_kind": "internal-only-not-an-outbound-idempotency-key",
+        }
+        conn = self._connect()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute(
+                "INSERT OR IGNORE INTO quarantined_publications "
+                "(content_id,idempotency_key,original_status,original_message_id,original_confirmed) "
+                "VALUES(?,?,?,NULL,0)",
+                (content_id, key, "LEGACY_RECEIPT_MISSING"),
+            )
+            existing = conn.execute(
+                "SELECT idempotency_key,original_status,original_message_id,original_confirmed "
+                "FROM quarantined_publications WHERE content_id=?", (content_id,),
+            ).fetchone()
+            if tuple(existing) != (key, "LEGACY_RECEIPT_MISSING", None, 0):
+                raise RuntimeError("legacy-quarantine-snapshot-changed")
             conn.execute(
                 "INSERT INTO quarantine_evidence(content_id,observed_outcome,evidence_json) "
                 "VALUES(?, 'UNKNOWN', ?)",

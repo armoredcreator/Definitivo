@@ -33,7 +33,7 @@ class FakeVision:
 
 class FakeIA:
     def generate_caption(self, _context):
-        return "Produto demonstrativo 🧡 #casa"
+        return "🧡 Produto demonstrativo #casa"
 
 
 class FakeSpeechProcessor:
@@ -215,7 +215,7 @@ def test_project_environment_loader_ignores_production_runtime_and_telegram_sett
     assert os.environ["GEMINI_API_KEY"] == "lab-gemini-key"
     assert os.environ["ARMORED_IA_ENABLED"] == "1"
     assert os.environ["ARMORED_IA_MAX_ATTEMPTS"] == "3"
-    assert os.environ["ARMORED_IA_MODEL"] == "lab-model"
+    assert "ARMORED_IA_MODEL" not in os.environ
     for key in (
         "ARMORED_REAL_TELEGRAM", "ARMORED_ROOT", "ARMORED_CREATOR_BOT_TOKEN",
         "ARMORED_HUB_1_CHAT_ID", "TELEGRAM_API_ID", "ARMORED_STUDIO_ALLOW_COPY",

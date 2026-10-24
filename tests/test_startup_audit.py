@@ -99,15 +99,18 @@ class StartupAuditTests(unittest.TestCase):
             db.fail(item_id, "RuntimeError: ARMORED_HUB_DRY_RUN=1: publicação real bloqueada")
 
             publisher = _AbsentPublisher()
-            summary = StartupReconciler(db, storage, publisher).run()
+            audit = StartupReconciler(db, storage, publisher)
+            summary = audit.run()
 
-            self.assertEqual(publisher.checked, ["823"])
+            self.assertEqual(publisher.checked, [])
             self.assertEqual(db.get(item_id).state, State.RECOVERY)
+            self.assertTrue(audit.publication_quarantine.contains(item_id))
             self.assertEqual(summary["failed"], 0)
             self.assertEqual(summary["pending"], 1)
             self.assertEqual(summary["publication_ambiguous"], 1)
             self.assertTrue(result.is_file())
 
+            audit.close()
             db.close()
 
     def test_startup_migrates_legacy_caption_waiting_to_recovery(self):
@@ -137,7 +140,7 @@ class StartupAuditTests(unittest.TestCase):
             self.assertEqual(summary["pending"], 1)
             db.close()
 
-    def test_startup_audit_refreshes_publication_state_after_reconciliation(self):
+    def test_startup_quarantines_pending_without_automatic_publication_check(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             storage = Storage(root)
@@ -157,14 +160,17 @@ class StartupAuditTests(unittest.TestCase):
             db.publication_started(item_id, destination_chat_id="-100", destination_topic_id=901)
 
             publisher = _ReconcilerPublisher(db)
-            summary = StartupReconciler(db, storage, publisher).run()
+            audit = StartupReconciler(db, storage, publisher)
+            summary = audit.run()
 
             publication = db.publication(item_id)
-            self.assertEqual(publisher.checked, ["542"])
-            self.assertEqual(publication["published_message_id"], "823")
-            self.assertEqual(publication["confirmed"], 1)
-            self.assertEqual(summary["publication_confirmed"], 1)
-            self.assertEqual(summary["publication_ambiguous"], 0)
+            self.assertEqual(publisher.checked, [])
+            self.assertIsNone(publication["published_message_id"])
+            self.assertEqual(publication["confirmed"], 0)
+            self.assertEqual(db.get(item_id).state, State.RECOVERY)
+            self.assertEqual(summary["publication_confirmed"], 0)
+            self.assertEqual(summary["publication_ambiguous"], 1)
+            audit.close()
 
             db.close()
 

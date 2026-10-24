@@ -28,11 +28,11 @@ def test_inflight_ia_recovery_does_not_skip_caption_before_speech(tmp_path, monk
     class IA:
         def generate_caption(self, context):
             events.append("ia")
-            return "Detalhe especial 🧡 #casa"
+            return "🧡 Detalhe especial #casa"
     coordinator, db, item_id = fixture(tmp_path, IA())
     db.transition(item_id, State.IA, "interrupted-after-entering-ia")
     def speech(ids):
-        assert db.get(item_id).publication_caption == "Detalhe especial 🧡 #casa"
+        assert db.get(item_id).publication_caption == "🧡 Detalhe especial #casa"
         assert db.get(item_id).state is State.SPEECH
         events.append("speech")
     monkeypatch.setattr(coordinator, "_run_speech_studio_batch", speech)

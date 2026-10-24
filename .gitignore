@@ -1,5 +1,6 @@
 # Local Python environments and generated media/state; never commit them.
 .venv/
+runtime/.venv/
 videos/
 outputs/
 storage/

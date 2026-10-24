@@ -14,6 +14,7 @@ from armored_core.models import State
 from armored_core.publication_quarantine import PublicationQuarantine
 from armored_core.services import PublicationDeferredError, SyncService
 from armored_core.storage import Storage
+from armored_core.startup_audit import StartupReconciler
 
 
 def _approved(
@@ -33,7 +34,7 @@ def _approved(
         item_id,
         "radio automotivo",
         f"https://s.shopee.com.br/affiliate-{message_id}",
-        publication_caption="Radio 🧡 bonita\n#radio",
+        publication_caption="🧡 Radio bonita\n#radio",
         ia_context={"shopId": "10", "itemId": message_id, "productName": "radio automotivo"},
     )
     if state != State.RECEIVED:
@@ -41,6 +42,38 @@ def _approved(
     if ambiguous:
         db.publication_started(item_id, "-1004341972306", 228)
     return item_id
+
+
+def test_legacy_publishing_without_receipt_gets_a_local_quarantine_fence(tmp_path):
+    quarantine = PublicationQuarantine(tmp_path / "publication-quarantine.sqlite3")
+    quarantine.quarantine_legacy_missing_receipt(
+        "legacy-item-1", evidence={"item_state": "RECOVERY"},
+    )
+
+    assert quarantine.contains("legacy-item-1")
+    assert quarantine.observed_outcomes() == {"UNKNOWN"}
+    import sqlite3
+    connection = sqlite3.connect(tmp_path / "publication-quarantine.sqlite3")
+    key, status = connection.execute(
+        "SELECT idempotency_key,original_status FROM quarantined_publications "
+        "WHERE content_id='legacy-item-1'"
+    ).fetchone()
+    connection.close()
+    assert key.startswith("legacy-missing-receipt:")
+    assert status == "LEGACY_RECEIPT_MISSING"
+
+
+def test_startup_audit_fences_legacy_recovery_before_any_publication_check(tmp_path):
+    storage = Storage(tmp_path / "legacy-project")
+    db = Database(storage.database / "armoredcreator.db")
+    item_id = _approved(db, storage, "legacy-no-receipt", state=State.RECOVERY, ambiguous=False)
+    db.record_retryable_error(item_id, "legacy-publication-receipt-missing:manual-reconciliation-required")
+    quarantine = PublicationQuarantine(storage.database / "publication-quarantine.sqlite3")
+
+    StartupReconciler(db, storage, publisher=None, publication_quarantine=quarantine).run()
+
+    assert quarantine.contains(item_id)
+    assert quarantine.unresolved_count() == 1
 
 
 class _ThreeSourceEmpty:

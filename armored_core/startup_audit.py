@@ -38,7 +38,7 @@ class StartupReconciler:
     def run(self) -> dict:
         rows = self.db.conn.execute(
             "SELECT content_id,state,source_id,telegram_message_id,"
-            "original_path,working_path,result_path,cleanup_completed "
+            "original_path,working_path,result_path,cleanup_completed,last_error "
             "FROM items ORDER BY created_at,content_id"
         ).fetchall()
         db_ids = {
@@ -67,6 +67,21 @@ class StartupReconciler:
 
             publication = self.db.publication(item_id)
             publication_check = None
+            if (
+                str(row["state"]) == State.RECOVERY.value
+                and str(row["last_error"] or "").startswith("legacy-publication-receipt-missing:")
+                and not self.publication_quarantine.contains(item_id)
+            ):
+                self.publication_quarantine.quarantine_legacy_missing_receipt(
+                    item_id,
+                    evidence={
+                        "item_state": str(row["state"]),
+                        "last_state_event": (
+                            dict(self.db.last_state_event(item_id))
+                            if self.db.last_state_event(item_id) else None
+                        ),
+                    },
+                )
             if publication:
                 verified_receipt = (
                     bool(publication["confirmed"])
@@ -81,10 +96,12 @@ class StartupReconciler:
                     # reconciliation workflow may clear that ambiguity.
                     publication_check = "QUARANTINED"
                     pub_state = "QUARANTINED_UNKNOWN"
-                elif str(publication["verification_status"] or "") == "SENT_UNVERIFIED":
-                    # Preserve legacy rows whose boolean flag was set despite
-                    # the explicit unverified status (including receipt 1339).
-                    # Do not reinterpret that inconsistency as confirmation.
+                elif str(publication["verification_status"] or "").upper() in {
+                    "PENDING", "SENT_UNVERIFIED", "UNKNOWN", "SENDING",
+                }:
+                    # Uncertain outcomes are fenced without querying or
+                    # retrying Telegram. Only explicit reconciliation may
+                    # change this durable quarantine decision.
                     item = self.db.get(item_id)
                     self.publication_quarantine.quarantine_unknown(
                         item_id,
@@ -95,7 +112,7 @@ class StartupReconciler:
                                 dict(self.db.last_state_event(item_id))
                                 if self.db.last_state_event(item_id) else None
                             ),
-                            "reason": "legacy-confirmed-flag-conflicts-with-SENT_UNVERIFIED",
+                            "reason": "publication-outcome-is-not-explicitly-confirmed",
                         },
                     )
                     publication_check = "UNKNOWN"
@@ -133,6 +150,14 @@ class StartupReconciler:
                     summary["publication_ambiguous"] += 1
             else:
                 pub_state = "NO_RECORD"
+
+            current = self.db.get(item_id)
+            if pub_state == "QUARANTINED_UNKNOWN" and current.state != State.RECOVERY:
+                self.db.transition(
+                    item_id,
+                    State.RECOVERY,
+                    "startup-publication-unknown-quarantined",
+                )
 
             current = self.db.get(item_id)
 

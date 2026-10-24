@@ -51,7 +51,7 @@ def test_policy_accepts_contextual_caption():
         "Unhas organizadas 🧡\n#unhas #organizacao",
         product_name="Expositor de esmaltes com gavetas",
         product_context={"categoryName": "unhas beleza organização"},
-    ) == "Unhas 🧡 organizadas\n#unhas #organizacao"
+    ) == "🧡 Unhas organizadas\n#unhas #organizacao"
 
 
 def test_policy_allows_natural_overlap_with_description():
@@ -59,7 +59,7 @@ def test_policy_allows_natural_overlap_with_description():
         "Cantinho resistente 🧡\n#casa",
         product_name="Bancada Suspensa",
         product_context={"description": "estrutura de aço carbono resistente"},
-    ) == "Cantinho 🧡 resistente\n#casa"
+    ) == "🧡 Cantinho resistente\n#casa"
 
 
 def test_policy_uses_vision_category_to_ground_footwear_words_and_hashtags():
@@ -72,13 +72,13 @@ def test_policy_uses_vision_category_to_ground_footwear_words_and_hashtags():
         "Chinelo casual\n#chinelo",
         product_name=context["productName"],
         product_context=context,
-    ) == "Chinelo 🧡 casual\n#chinelo"
+    ) == "🧡 Chinelo casual\n#chinelo"
 
     assert _normalize_validate(
         "Chinelos charmosos.\n#calçados #moda",
         product_name=context["productName"],
         product_context=context,
-    ) == "Chinelos 🧡 charmosos.\n#calçados #moda"
+    ) == "🧡 Chinelos charmosos.\n#calçados #moda"
 
 
 def test_policy_does_not_treat_unverified_product_attributes_as_neutral_reactions():
@@ -176,7 +176,7 @@ def test_caption_selects_valid_candidate_without_second_gemini_call(monkeypatch)
         "category": "beleza maquiagem",
     })
 
-    assert caption == "Beleza 🧡 charmosa\n#beleza"
+    assert caption == "🧡 Beleza charmosa\n#beleza"
     assert provider.calls == 1
 
 
@@ -204,7 +204,7 @@ def test_caption_ranks_all_valid_candidates_and_keeps_one_provider_call(monkeypa
 
     assert provider.calls == 1
     assert result.selection.index == 2
-    assert result.caption == "Cantinho 🧡 prático\n#cozinha"
+    assert result.caption == "🧡 Cantinho prático\n#cozinha"
     assert len(result.evaluations) == 3
     assert all(evaluation.policy_valid for evaluation in result.evaluations)
     assert result.evaluations[1].selected is True
@@ -253,8 +253,8 @@ def test_all_policy_rejections_retry_once_then_recovery(monkeypatch):
     assert result.provider_requests == 2
     assert result.feedback_rounds
     assert result.caption in {
-        "Cantinho 🧡 prático\n#cozinha",
-        "Cozinha 🧡 prática\n#cozinha",
+        "🧡 Cantinho prático\n#cozinha",
+        "🧡 Cozinha prática\n#cozinha",
     }
 
 
@@ -283,20 +283,39 @@ def test_policy_normalization_is_idempotent_and_only_fixes_formatting():
         product_name="Organizador de mesa",
         product_context=context,
     )
-    assert first.caption == "Mesa 🧡 bonita\n#casa #organizacao"
+    assert first.caption == "🧡 Mesa bonita\n#casa #organizacao"
     assert first.corrections
     assert second.caption == first.caption
     assert second.corrections == ()
+
+
+def test_policy_moves_orange_heart_to_caption_start_and_enforces_contract():
+    context = {"categoryName": "organização doméstica"}
+    normalized = normalize_caption(
+        "Mesa 🧡 bonita #casa",
+        product_name="Organizador de mesa",
+        product_context=context,
+    )
+    assert normalized.caption == "🧡 Mesa bonita\n#casa"
+    assert "orange_heart_moved_to_start" in normalized.corrections
+    assert validate_caption(
+        normalized.caption, product_name="Organizador de mesa", product_context=context,
+    ) == normalized.caption
+    with pytest.raises(CaptionPolicyError, match="no início"):
+        validate_caption(
+            "Mesa 🧡 bonita\n#casa",
+            product_name="Organizador de mesa",
+            product_context=context,
+        )
 
 
 @pytest.mark.parametrize(
     "caption",
     [
         "Mesa bonita\n#casa",
-        "Mesa 🧡 bonita 🧡\n#casa",
-        "🧡 Mesa bonita\n#casa",
-        "Mesa 🧡 bonita\n#casa texto",
-        "Mesa 🧡 bonita\n#Casa #casa",
+        "🧡 Mesa bonita 🧡\n#casa",
+        "🧡 Mesa bonita\n#casa texto",
+        "🧡 Mesa bonita\n#Casa #casa",
     ],
 )
 def test_policy_remains_strict_when_normalizer_is_bypassed(caption):
@@ -310,7 +329,7 @@ def test_policy_remains_strict_when_normalizer_is_bypassed(caption):
 
 def test_normalizer_does_not_invent_words_or_contextless_hashtags():
     result = normalize_caption("Texto alegre 😍\n#viral #achados")
-    assert result.caption == "Texto 🧡 alegre"
+    assert result.caption == "🧡 Texto alegre"
     with pytest.raises(CaptionPolicyError):
         validate_caption(result.caption)
 
@@ -329,7 +348,7 @@ def test_policy_does_not_treat_unrelated_long_hashtag_compounds_as_contextual():
         "Estilo leve 🧡\n#veraofashion",
         product_name="Chinelo feminino verão",
     )
-    assert result.caption == "Estilo 🧡 leve"
+    assert result.caption == "🧡 Estilo leve"
     with pytest.raises(CaptionPolicyError):
         validate_caption(result.caption, product_name="Chinelo feminino verão")
 
@@ -345,7 +364,7 @@ def test_sparse_title_prefix_is_reserved_for_possible_brand_or_product_line():
         accepted,
         product_name=context["productName"],
         product_context=context,
-    ) == "Máscara 🧡 acidificante\n#acidificante"
+    ) == "🧡 Máscara acidificante\n#acidificante"
 
     unsafe = normalize_caption(
         "Máscara Essencial #essencial",
@@ -388,7 +407,7 @@ def test_provider_retries_transport_but_not_policy(monkeypatch):
     })
 
     assert calls["count"] == 3
-    assert caption == "Barbearia 🧡 prática\n#barbearia"
+    assert caption == "🧡 Barbearia prática\n#barbearia"
 
 
 
@@ -397,7 +416,7 @@ def test_policy_forces_orange_heart_and_removes_model_emojis():
         "Mesa organizada 😍✨\n#casa #organizacao",
         product_name="Organizador de mesa",
         product_context={"categoryName": "organização doméstica"},
-    ) == "Mesa 🧡 organizada\n#casa #organizacao"
+    ) == "🧡 Mesa organizada\n#casa #organizacao"
 
 
 def test_policy_adds_orange_heart_when_model_returns_no_emoji():
@@ -405,7 +424,7 @@ def test_policy_adds_orange_heart_when_model_returns_no_emoji():
         "Cantinho prático\n#cozinha",
         product_name="Bancada suspensa",
         product_context={"category": "cozinha", "usage": "prática"},
-    ) == "Cantinho 🧡 prático\n#cozinha"
+    ) == "🧡 Cantinho prático\n#cozinha"
 
 
 
@@ -414,7 +433,7 @@ def test_policy_deduplicates_hashtags_case_insensitively():
         "Mesa organizada 😍\n#Casa #casa",
         product_name="Organizador de mesa",
         product_context={"categoryName": "organização doméstica"},
-    ) == "Mesa 🧡 organizada\n#Casa"
+    ) == "🧡 Mesa organizada\n#Casa"
 
 
 
@@ -430,7 +449,7 @@ def test_policy_removes_compound_and_presentation_emojis(emoji):
         product_name="Mesa organizadora",
         product_context={"categoryName": "casa organização"},
     )
-    assert result == "Mesa 🧡 bonita\n#casa"
+    assert result == "🧡 Mesa bonita\n#casa"
 
 
 @pytest.mark.parametrize(
@@ -451,7 +470,7 @@ def test_policy_rejects_malformed_hashtags_extra_text_and_corrupted_unicode(capt
 def test_policy_detects_distinctive_phrase_when_title_stopwords_are_present():
     with pytest.raises(CaptionPolicyError, match="expressão distintiva"):
         validate_caption(
-            "Descascador de 🧡 Legumes\n#cozinha",
+            "🧡 Descascador de Legumes\n#cozinha",
             product_name="Descascador de Legumes Apontador",
             product_context={"categoryName": "cozinha utensílios"},
         )
@@ -459,10 +478,10 @@ def test_policy_detects_distinctive_phrase_when_title_stopwords_are_present():
 
 def test_separate_contextual_hashtags_are_not_recombined_as_title_phrase():
     assert validate_caption(
-        "Menina 🧡 linda\n#menina #alcinha",
+        "🧡 Menina linda\n#menina #alcinha",
         product_name="Blusinha regata alça fina infantil menina alcinha algodão",
         product_context={"category": "infantil"},
-    ) == "Menina 🧡 linda\n#menina #alcinha"
+    ) == "🧡 Menina linda\n#menina #alcinha"
 
 
 def test_policy_deduplicates_repeated_candidate_hashtags_and_emoji():
@@ -470,7 +489,7 @@ def test_policy_deduplicates_repeated_candidate_hashtags_and_emoji():
         "Mesa bonita 🛍️\n#Casa #casa",
         product_name="Mesa organizadora",
         product_context={"categoryName": "casa organização"},
-    ) == "Mesa 🧡 bonita\n#Casa"
+    ) == "🧡 Mesa bonita\n#Casa"
 
 
 
@@ -497,7 +516,7 @@ def test_ollama_and_gemini_candidates_share_central_caption_policy(monkeypatch):
         "category": "cozinha",
         "usage": "prática",
     })
-    assert caption == "Cantinho 🧡 prático\n#cozinha"
+    assert caption == "🧡 Cantinho prático\n#cozinha"
 
 
 
@@ -525,7 +544,7 @@ def test_gemini_and_ollama_use_the_same_final_policy(monkeypatch):
         provider=GeminiProvider(requester=requester)
     ).generate({"productName": "Bancada suspensa", "category": "cozinha", "usage": "prática"})
 
-    assert caption == "Cantinho 🧡 prático\n#cozinha"
+    assert caption == "🧡 Cantinho prático\n#cozinha"
     assert len(calls) == 1
 
 
@@ -534,7 +553,7 @@ def test_policy_keeps_exactly_one_orange_heart_when_model_returns_multiple_emoji
         "Mesa bonita 🧡🧡😍✨\n#casa",
         product_name="Organizador de mesa",
     )
-    assert result == "Mesa 🧡 bonita\n#casa"
+    assert result == "🧡 Mesa bonita\n#casa"
     assert result.count("🧡") == 1
 
 
@@ -546,10 +565,10 @@ def test_policy_is_strict_while_normalizer_records_safe_formatting_repairs():
     result = normalize_caption(
         raw, product_name="Organizador de mesa", product_context=context,
     )
-    assert result.caption == "Mesa 🧡 bonita\n#Casa"
+    assert result.caption == "🧡 Mesa bonita\n#Casa"
     assert "excess_emojis_removed" in result.corrections
     assert "duplicate_hashtag_removed" in result.corrections
-    assert "orange_heart_centered" in result.corrections
+    assert "orange_heart_moved_to_start" in result.corrections
     assert validate_caption(
         result.caption, product_name="Organizador de mesa", product_context=context,
     ) == result.caption
@@ -560,8 +579,8 @@ def test_policy_rejects_unrelated_generic_hashtag_and_does_not_invent_replacemen
         "Mesa bonita 🧡 #viral",
         product_name="Organizador de mesa",
     )
-    assert result.caption == "Mesa 🧡 bonita"
-    assert result.corrections == ("unrelated_hashtag_removed", "orange_heart_centered")
+    assert result.caption == "🧡 Mesa bonita"
+    assert result.corrections == ("unrelated_hashtag_removed", "orange_heart_moved_to_start")
     with pytest.raises(CaptionPolicyError, match="1 ou 2 hashtags"):
         validate_caption(result.caption, product_name="Organizador de mesa")
 

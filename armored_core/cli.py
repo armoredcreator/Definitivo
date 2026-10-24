@@ -14,11 +14,8 @@ from .storage import project_root
 
 def _load_project_configuration(root: Path) -> None:
     credentials = root / "credentials" / "project.env"
-    config = root / ".env"
     if credentials.is_file():
         load_dotenv(credentials, override=True)
-    if config.is_file():
-        load_dotenv(config, override=False)
 
 
 def _validate_routes(routes: tuple[RouteConfig, ...]) -> None:

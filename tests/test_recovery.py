@@ -21,7 +21,7 @@ class Vision:
 
 class ValidIA:
     def generate_caption(self, _context):
-        return "Radio 🧡 bonita\n#radio"
+        return "🧡 Radio bonita\n#radio"
 
     def generate_caption_with_evidence(self, context):
         from ArmoredIA.caption.generator import CaptionGenerationResult
@@ -180,7 +180,7 @@ class RecoveryTests(unittest.TestCase):
                 if self.calls == 1:
                     raise RuntimeError("simulated-ia-crash")
                 self.context_seen = dict(product_context)
-                return "Radio 🧡 bonita\n#radio"
+                return "🧡 Radio bonita\n#radio"
 
             def generate_caption_with_evidence(self, product_context):
                 from ArmoredIA.caption.generator import CaptionGenerationResult
@@ -242,7 +242,7 @@ class RecoveryTests(unittest.TestCase):
             self.assertEqual(vision.calls, 1)
             self.assertEqual(ia.calls, 2)
             self.assertEqual(ia.context_seen, vision.context)
-            self.assertEqual(recovered.publication_caption, "Radio 🧡 bonita\n#radio")
+            self.assertEqual(recovered.publication_caption, "🧡 Radio bonita\n#radio")
             self.assertEqual(publisher.count, 1)
         finally:
             if previous_ia is None:

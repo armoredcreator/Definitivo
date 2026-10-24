@@ -45,7 +45,7 @@ class HubContractTests(unittest.TestCase):
             item.item_id,
             "Produto para casa",
             "https://s.shopee.com.br/affiliate",
-            publication_caption="Casa 🧡 bonita\n#casa",
+            publication_caption="🧡 Casa bonita\n#casa",
         )
         db.transition(item.item_id, State.SPEECH, "test-speech-ready")
         db.transition(item.item_id, State.STUDIO_BATCH, "test-studio-ready")

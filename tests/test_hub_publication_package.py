@@ -22,7 +22,7 @@ def make_item(**kwargs):
         result_path=Path("result.mp4"),
         affiliate_name="radio automotivo",
         affiliate_url="https://s.shopee.com.br/original",
-        publication_caption="Radio 🧡 bonita\n#radio",
+        publication_caption="🧡 Radio bonita\n#radio",
     )
     base.update(kwargs)
     return Item(**base)
@@ -32,7 +32,7 @@ class HubPublicationPackageTests(unittest.TestCase):
     def test_formats_caption_plus_all_links(self):
         item = make_item(
             affiliate_name="Decoração para casa",
-            publication_caption="Casa 🧡 bonita\n#casa #decoracao",
+            publication_caption="🧡 Casa bonita\n#casa #decoracao",
             affiliate_urls=(
                 "https://s.shopee.com.br/o",
                 "https://s.shopee.com.br/1",
@@ -42,7 +42,7 @@ class HubPublicationPackageTests(unittest.TestCase):
         package = ArmoredHub._publication_text(item)
         self.assertEqual(
             package,
-            "Casa 🧡 bonita\n#casa #decoracao\n\n"
+            "🧡 Casa bonita\n#casa #decoracao\n\n"
             "https://s.shopee.com.br/o\n"
             "https://s.shopee.com.br/1\n"
             "https://s.shopee.com.br/2",
@@ -147,7 +147,7 @@ class HubPublicationPackageTests(unittest.TestCase):
                 db.set_vision(
                     item_id, "radio automotivo", "https://s.shopee.com.br/original",
                     ia_context={"productName": "radio automotivo"},
-                    publication_caption="Radio 🧡 bonita\n#radio",
+                    publication_caption="🧡 Radio bonita\n#radio",
                 )
                 result_path = db.get(item_id).workspace / "result.mp4"
                 result_path.write_bytes(b"test-video")

@@ -56,7 +56,7 @@ def test_selected_provider_is_persisted_without_automatic_switch(tmp_path, monke
         else:
             coordinator.pipeline.run(item_id, stop_after_ia=True)
             assert db.get(item_id).state is State.SPEECH
-            assert db.get(item_id).publication_caption == "Casa 🧡 bonita\n#casa"
+            assert db.get(item_id).publication_caption == "🧡 Casa bonita\n#casa"
         receipt = db.conn.execute("SELECT * FROM ia_generation_attempts WHERE content_id=?", (item_id,)).fetchone()
         assert receipt["provider"] == provider
         assert receipt["model"] == f"synthetic-{provider}-model"

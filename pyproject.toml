@@ -21,7 +21,7 @@ armoredcreator = "armored_core.cli:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["ArmoredSpeech*", "ArmoredStudio*", "ArmoredSync*", "ArmoredVision*", "ArmoredStock*", "ArmoredIA*", "ArmoredHub*", "armored_core*"]
-exclude = [".venv*", "venv*", ".git*", "__pycache__*", ".pytest_cache*", "build*", "dist*", "storage*", "credentials*", "ArmoredStudio.runtime*", "ArmoredSpeech.runtime*"]
+exclude = [".venv*", "runtime/.venv*", "venv*", ".git*", "__pycache__*", ".pytest_cache*", "build*", "dist*", "storage*", "credentials*", "ArmoredStudio.runtime*", "ArmoredSpeech.runtime*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

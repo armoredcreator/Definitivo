@@ -76,7 +76,7 @@ class PublicationIdentityTests(unittest.TestCase):
         self.db.set_vision(
             self.item, "radio automotivo", "https://example.invalid/affiliate",
             ia_context={"productName": "radio automotivo"},
-            publication_caption="Radio 🧡 bonita\n#radio",
+            publication_caption="🧡 Radio bonita\n#radio",
         )
         result = self.storage.result(
             self.item, "https://example.invalid/affiliate", "radio automotivo"

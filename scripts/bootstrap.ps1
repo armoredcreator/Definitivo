@@ -5,14 +5,15 @@ $Version = & $Python --version
 if ($Version -ne 'Python 3.11.9') {
     throw "ArmoredCreator requer Python 3.11.9; encontrado: $Version"
 }
-$VenvPython = Join-Path $ProjectRoot '.venv\Scripts\python.exe'
+$VenvPython = Join-Path $ProjectRoot 'runtime\.venv\Scripts\python.exe'
 if (Test-Path -LiteralPath $VenvPython) {
-    throw 'O ambiente .venv já existe. Preserve-o e revise antes de recriar.'
+    throw 'O ambiente runtime\.venv já existe. Preserve-o e revise antes de recriar.'
 }
 Push-Location $ProjectRoot
 try {
-    & $Python -m venv .venv
-    if ($LASTEXITCODE -ne 0) { throw 'Falha ao criar .venv' }
+    New-Item -ItemType Directory -Force -Path (Join-Path $ProjectRoot 'runtime') | Out-Null
+    & $Python -m venv runtime\.venv
+    if ($LASTEXITCODE -ne 0) { throw 'Falha ao criar runtime\.venv' }
     & $VenvPython -m pip install --upgrade pip
     if ($LASTEXITCODE -ne 0) { throw 'Falha ao atualizar pip' }
     & $VenvPython -m pip install -r requirements-runtime311.lock.txt

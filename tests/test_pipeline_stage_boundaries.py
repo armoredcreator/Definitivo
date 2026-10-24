@@ -25,7 +25,7 @@ class IA:
 
     def generate_caption(self, context):
         self.calls += 1
-        return "Caneca bonita 🧡 #casa"
+        return "🧡 Caneca bonita #casa"
 
 
 class Studio:
@@ -72,7 +72,7 @@ def test_pipeline_stop_after_ia_is_durable_and_does_not_call_studio(tmp_path, mo
 
     item = db.get(content_id)
     assert item.state is State.SPEECH
-    assert item.publication_caption == "Caneca bonita 🧡 #casa"
+    assert item.publication_caption == "🧡 Caneca bonita #casa"
     assert ia.calls == 1
     assert studio.calls == 0
     assert publisher.calls == 0

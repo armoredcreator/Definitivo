@@ -29,7 +29,7 @@ class _IA:
 
     def generate_caption(self, _context):
         self.events.append("ia")
-        return "Radio 🧡 bonita\n#radio"
+        return "🧡 Radio bonita\n#radio"
 
     def generate_caption_with_evidence(self, _context):
         from ArmoredIA.caption.generator import CaptionGenerationResult
@@ -164,7 +164,7 @@ def test_coordinator_routes_normal_execution_through_speech_v5_before_studio_and
     current = db.get(item_id)
     assert current.state is State.PUBLISHED
     assert current.cleanup_completed is True
-    assert current.publication_caption == "Radio 🧡 bonita\n#radio"
+    assert current.publication_caption == "🧡 Radio bonita\n#radio"
     assert events.index("ia") < events.index("speech-analyze") < events.index("speech-prepare")
     assert events.index("speech-prepare") < events.index("studio") < events.index("hub")
     assert db.last_state_event(item_id)["new_state"] == State.PUBLISHED.value
@@ -298,7 +298,7 @@ def test_catch_up_processes_each_video_sequentially_through_hub(
         def generate_caption(self, context):
             name = str((context or {}).get("productName", "unknown"))
             events.append(f"ia:{name}")
-            return "Radio 🧡 bonita\n#radio"
+            return "🧡 Radio bonita\n#radio"
 
     class TraceSpeech:
         intelligence = SimpleNamespace(preflight=lambda: events.append("speech-preflight"))

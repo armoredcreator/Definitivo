@@ -29,13 +29,13 @@ class Vision:
 
 class IA:
     def generate_caption(self, _context):
-        return "Bancada 🧡 cozinha\n#cozinha"
+        return "🧡 Bancada cozinha\n#cozinha"
 
     def generate_caption_with_evidence(self, context):
         from ArmoredIA.caption.generator import CaptionGenerationResult
         from ArmoredIA.caption.selector import CaptionCandidateEvaluation, CaptionSelection
 
-        caption = "Bancada 🧡 cozinha\n#cozinha"
+        caption = "🧡 Bancada cozinha\n#cozinha"
         selection = CaptionSelection(caption=caption, index=0, score=1.0)
         evaluation = CaptionCandidateEvaluation(
             index=0, caption=caption, policy_valid=True, rejection_reason=None,

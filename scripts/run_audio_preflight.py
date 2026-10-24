@@ -14,10 +14,6 @@ def main() -> int:
     credentials = root / "credentials" / "project.env"
     if credentials.is_file():
         load_dotenv(credentials, override=True)
-    project_config = root / ".env"
-    if project_config.is_file():
-        load_dotenv(project_config, override=False)
-
     provider = (os.getenv("ARMORED_IA_PROVIDER") or "ollama").strip().casefold()
     provider_configured = provider == "ollama" or (
         provider == "gemini" and bool(os.getenv("GEMINI_API_KEY"))

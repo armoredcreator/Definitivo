@@ -20,7 +20,9 @@ jobs:
         with:
           python-version: "3.11.9"
       - name: Install project and test dependencies
-        run: python -m pip install . pytest
+        run: |
+          python -m pip install -r requirements-runtime311.lock.txt
+          python -m pip install --no-build-isolation --no-deps . pytest
       - name: Compile application and tests
         run: python -m compileall -q ArmoredSpeech ArmoredStudio ArmoredSync ArmoredVision ArmoredStock ArmoredIA ArmoredHub armored_core scripts tests
       - name: Run full regression suite

@@ -26,9 +26,9 @@ O Coordinator integra os módulos e impõe a sequência. Discovery leve pode oco
 
 ## Estados e retorno para Stock
 
-Vision aprovado é representado pelo item `RECEIVED` com `affiliate_url` persistida. A migração versionada `20261024_001_requeue_approved_to_stock` retorna para `RECEIVED` os aprovados que avançaram além de Stock (IA, Speech, Studio, Publishing, Published, Recovery ou falha posterior). Isso deixa o próximo passo em Stock, sem repetir Vision.
+Vision aprovado é representado pelo item `RECEIVED` com `affiliate_url` persistida. A migração `20261024_001_requeue_approved_to_stock` foi corrigida para nunca alterar `PUBLISHED`, `PUBLISHING` ou itens com recibo de publicação. A migração corretiva `20261024_002_restore_publication_fences` usou os eventos preservados para restaurar 15 itens com recibo `CONFIRMED` ao estado terminal `PUBLISHED`. Sete itens com publicação pendente, enviada sem verificação ou etapa de envio sem recibo voltaram para `RECOVERY`. A migração `20261024_003_fence_missing_legacy_receipts` criou travas duráveis para os três casos `PUBLISHING` sem recibo; a quarentena local contém oito itens ambíguos no total, incluindo recibos pendentes fora do conjunto de 23. Nenhum deles pode voltar automaticamente à produção ou ser reenviado. Um `RECOVERY` sem recibo e sem histórico de envio retornou a `RECEIVED` para aguardar Stock.
 
-A migração foi aplicada somente na cópia nova em 24/10/2026. Reencaminhou **23 itens**: 15 `PUBLISHED`, 5 `PUBLISHING` e 3 `RECOVERY`, todos agora em `RECEIVED` (Vision aprovado, aguardando Stock). Preserva fonte, IDs, links, contexto de produto, caminho/hash do original, publicações/recibos, quarentenas e histórico. Remove apenas referências derivadas do pipeline e marcadores de execução. Os 20 recibos permanecem preservados; nada foi apagado dos tópicos. A execução é idempotente, gravada em `migration_audit` e precedida por backup consistente do SQLite.
+A primeira migração havia reencaminhado **23 itens** (15 `PUBLISHED`, 5 `PUBLISHING`, 3 `RECOVERY`) e limpado referências derivadas; o backup original preservou os estados e evidências anteriores. A correção foi aplicada somente na cópia nova em 24/10/2026 e alterou 22 estados: 15 `PUBLISHED`, 7 `RECOVERY`; o item restante, `RECOVERY` sem recibo e sem histórico de envio, continuou em `RECEIVED`. Os 20 recibos e todos os eventos anteriores permanecem preservados; nada foi apagado dos tópicos. As correções são idempotentes, registradas em `migration_audit` e precedidas por backups consistentes do SQLite.
 
 O histórico de publicação não autoriza apagar mensagens de tópicos. O código não executa exclusão de mensagens, não envia Telegram no START/preflight e não faz buscas Shopee sem quota autorizada. Itens em quarentena continuam bloqueados até reconciliação apropriada.
 
@@ -36,7 +36,7 @@ O histórico de publicação não autoriza apagar mensagens de tópicos. O códi
 
 O banco operacional é `storage/database/armoredcreator.db`. Ele foi copiado por SQLite Backup API; quatro bancos auxiliares ativos também foram copiados pelo mesmo mecanismo. A instalação anterior e suas credenciais permanecem intactas.
 
-O backup consistente anterior à migração tem 14.486 itens, 78.074 eventos de estado, 20 publicações, 3 fontes e 48 relações fonte/tópico. A cópia migrada tem os mesmos 14.486 itens e 20 recibos, 78.097 eventos (23 eventos de retorno para Stock), 8.259 itens em `RECEIVED` e 6.227 `WAITING_VISION`. Backup: `storage/backups/armoredcreator-before-stock-reset-20261024.sqlite3` (42.631.168 bytes). Inventário e resultado da migração em `storage/validation/`, ignorados pelo Git. Não há pasta de auditoria nem relatório solto na raiz.
+O backup consistente anterior à migração tem 14.486 itens, 78.074 eventos de estado, 20 publicações, 3 fontes e 48 relações fonte/tópico. A base mantém os mesmos 14.486 itens e 20 recibos; a correção acrescentou 22 eventos auditáveis sem apagar os 23 eventos da primeira migração. Os dois backups consistentes e os relatórios estão em `storage/backups/` e `storage/validation/`, ignorados pelo Git. Não há pasta de auditoria nem relatório solto na raiz.
 
 As reclamações históricas de identidade de produto são semeadas de forma determinística quando a deduplicação é inicializada; a migração de estado não reescreve itens ou identidade. O dono canônico considera publicação confirmada, avanço durável, render e original com hash verificado. Duplicados ficam registrados e apontam para o canônico. A validação não remove histórico nem arquivos.
 
@@ -44,15 +44,15 @@ O banco principal é a fonte de verdade. Os bancos auxiliares mantêm áreas dur
 
 ## Layout e dados locais
 
-Código, testes, scripts e o documento mestre são versionáveis. O único `.env` raiz é `.env.example`, um modelo sem credenciais; os valores reais e sessões ficam em `credentials/`, ignorado pelo Git. SQLite, checkpoints, logs, backups e vídeos ficam em `storage/`, também ignorado. Os caches de Whisper/AudioSet ficam em `runtime/models/audio/` e os modelos RVC permanecem em runtime local ignorado. Efeitos privados e executável Bot API não são publicados no repositório.
+Código, testes, scripts e o documento mestre são versionáveis. `.env.example` é apenas um modelo sem credenciais e não é carregado pela aplicação; a única fonte de configuração privada e sessões é `credentials/`, ignorado pelo Git. SQLite, checkpoints, logs, backups e vídeos ficam em `storage/`, também ignorado. Os caches de Whisper/AudioSet ficam em `runtime/models/audio/` e os modelos RVC permanecem em runtime local ignorado. Efeitos privados e executável Bot API não são publicados no repositório.
 
 O caminho opcional `ARMORED_LEGACY_MEDIA_ROOT` aponta para `ArmoredCreator-final\storage`. É uma origem local confiável somente para leitura: Stock copia o original selecionado, confere estabilidade e SHA-256, e nunca move nem altera o arquivo antigo. Sem esta configuração, originais fora da raiz nova são recusados.
 
-Para transportar o projeto, instalar o código e provisionar separadamente: `credentials/project.env`, sessões Telegram, bancos SQLite e suas cópias, executável/runtime Telegram Bot API, pesos RVC e demais modelos, efeito de áudio em `ArmoredSpeech/assets/efeitosonoro.wav`, e eventuais originais necessários. O efeito é propriedade do Speech; o Studio não mantém cópia. Não transportar a pasta `.venv`; ela é recriada a partir do lock.
+Para transportar o projeto, instalar o código e provisionar separadamente: `credentials/project.env`, sessões Telegram, bancos SQLite e suas cópias, executável/runtime Telegram Bot API, pesos RVC e demais modelos, efeito de áudio em `ArmoredSpeech/assets/efeitosonoro.wav`, e eventuais originais necessários. O efeito é propriedade do Speech; o Studio não mantém cópia. Não transportar `runtime/.venv`; ele é recriado a partir do lock.
 
 ## Python e instalação
 
-O runtime suportado é Windows amd64 com Python **3.11.9**, em um único `.venv` na raiz. Dependências fixadas estão em `requirements-runtime311.lock.txt`; Fairseq/RVC localizados e revisados ficam em `runtime/packages/rvc311`. Os fontes/hash usados para construir a wheel RVC são registrados em `runtime/packages/sources`.
+O runtime suportado é Windows amd64 com Python **3.11.9**, em um único ambiente `runtime/.venv`. Dependências fixadas estão em `requirements-runtime311.lock.txt`; Fairseq/RVC localizados e revisados ficam em `runtime/packages/rvc311`. Os fontes/hash usados para construir a wheel RVC são registrados em `runtime/packages/sources`.
 
 No PowerShell, a partir da raiz do repositório:
 
@@ -60,7 +60,7 @@ No PowerShell, a partir da raiz do repositório:
 .\scripts\bootstrap.ps1
 ```
 
-O script recusa uma versão Python diferente ou um `.venv` já existente; instala o lock e o pacote, e termina com `pip check`. Se já houver ambiente, inspecione-o antes de qualquer ação. FFmpeg, Bot API e modelos de áudio são dependências locais/nativas e não criam outro ambiente Python. Modelos de classificação/Whisper ficam em `runtime/models/audio/` (atualmente cerca de 425 MB locais); o preflight valida a presença sem baixar nem executar inferência.
+O script recusa uma versão Python diferente ou `runtime/.venv` já existente; instala o lock e o pacote, e termina com `pip check`. Se já houver ambiente, inspecione-o antes de qualquer ação. FFmpeg, Bot API e modelos de áudio são dependências locais/nativas e não criam outro ambiente Python. Modelos de classificação/Whisper ficam em `runtime/models/audio/` (atualmente cerca de 425 MB locais); o preflight valida a presença sem baixar nem executar inferência.
 
 ## Configuração de Telegram e limites externos
 
@@ -80,11 +80,11 @@ O limite de produção é estrito: um vídeo por vez, sem paralelo de FFmpeg, se
 
 ## START ALL
 
-`START_ALL.bat` é o único ponto de entrada de usuário. Confere `.venv` 3.11.9, credenciais e preflight dos módulos/runtime; por padrão valida, sem iniciar produção, Bot API, buscas Shopee ou publicação. O launcher do Coordinator e as ferramentas de auditoria ficam em `scripts/` e são componentes internos, não atalhos de produção.
+`START_ALL.bat` é o único ponto de entrada de usuário. Confere `runtime/.venv` 3.11.9, credenciais e preflight dos módulos/runtime; por padrão valida, sem iniciar produção, Bot API, buscas Shopee ou publicação. O launcher do Coordinator e as ferramentas de auditoria ficam em `scripts/` e são componentes internos, não atalhos de produção.
 
 ## Validação de entrega
 
-Valide no `.venv` novo:
+Valide no `runtime/.venv` novo:
 
 1. `python -m pip check` sem conflitos.
 2. Suíte completa com `python -m pytest`.
@@ -94,6 +94,8 @@ Valide no `.venv` novo:
 6. Fluxo de descoberta/Vision sem criar pastas por item; provar materialização unitária em Stock e execução serial de Speech/Studio.
 7. `python scripts/verify_installation.py` confirma branch, commit, árvore limpa e igualdade com `origin/main`; gera hashes SHA-256 dos arquivos versionados em `storage/validation/source-integrity.json` e recusa arquivos privados.
 8. Revisão de `git status` e arquivos ignorados para garantir que não haja credenciais, sessões, bancos, mídia ou modelos no Git.
+
+Na validação local Windows, quatro testes podem ser ignorados por barreiras explícitas do ambiente: o E2E que exige autorização `ARMORED_REAL_TELEGRAM_E2E=1`; dois testes de links simbólicos que exigem privilégio do Windows; e a verificação de `safe_globals` quando a API pública não existe na versão de PyTorch instalada. Esses skips não afirmam validação de publicação real; esse E2E permanece bloqueado até autorização específica.
 
 O projeto só deve ser declarado pronto quando a validação integrada e a instalação reproduzível forem aprovadas. Evidências transitórias de validação ficam em `storage/validation/` e não são versionadas. Este documento é a única documentação técnica do repositório; o README raiz é somente uma apresentação curta. Relatórios antigos do laboratório de áudio foram consolidados como evidência histórica abaixo e não são validação da versão Definitivo.
 

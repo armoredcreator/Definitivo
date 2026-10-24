@@ -24,7 +24,7 @@ def prepared(tmp_path, monkeypatch):
     source = tmp_path / "source.mp4"
     source.write_bytes(b"synthetic original")
     item_id = SyncService(db, storage).ingest(source, "101", source_id="synthetic-source")
-    db.set_vision(item_id, "Example Casa", "https://affiliate.invalid/example", publication_caption="Casa 🧡 bonita\n#casa")
+    db.set_vision(item_id, "Example Casa", "https://affiliate.invalid/example", publication_caption="🧡 Casa bonita\n#casa")
     output = db.get(item_id).workspace / "result.mp4"
     output.write_bytes(b"synthetic render")
     db.set_result(item_id, output)

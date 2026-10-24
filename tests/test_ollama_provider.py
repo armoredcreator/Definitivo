@@ -98,7 +98,7 @@ def test_ollama_generator_defaults_to_one_grounded_candidate(monkeypatch):
         "category": "calçados",
         "usage": "uso casual",
     })
-    assert result.caption == "Chinelo 🧡 casual\n#chinelo"
+    assert result.caption == "🧡 Chinelo casual\n#chinelo"
     captions_schema = calls[0]["format"]["properties"]["captions"]
     assert captions_schema["minItems"] == 1
     assert "Gere EXATAMENTE 1 opções distintas" in calls[0]["prompt"]
@@ -130,7 +130,7 @@ def test_ollama_format_retry_is_bounded_and_explains_the_repair(monkeypatch):
 
     generator = CaptionGenerator(provider=OllamaProvider(requester=requester))
     result = generator.generate_with_evidence({"productName": "Produto para casa", "description": "sala"})
-    assert result.caption == "Sala 🧡 bonita\n#sala"
+    assert result.caption == "🧡 Sala bonita\n#sala"
     assert len(calls) == 2
     assert "CORREÇÃO DE FORMATO" in calls[1]["prompt"]
 
@@ -159,7 +159,7 @@ def test_ollama_policy_feedback_excludes_rejected_title_phrase_on_retry(monkeypa
         "productName": "Blusinha regata alça fina infantil menina algodão Malwee Kids",
         "category": "infantil",
     })
-    assert result.caption == "Menina 🧡 bonita\n#menina"
+    assert result.caption == "🧡 Menina bonita\n#menina"
     assert len(calls) == 2
     assert "alca, fina" in calls[1]["prompt"] or "fina, alca" in calls[1]["prompt"]
     text_pattern = calls[1]["format"]["properties"]["captions"]["items"]["properties"]["text"]["pattern"]

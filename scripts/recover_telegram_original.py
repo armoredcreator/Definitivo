@@ -246,7 +246,8 @@ async def _interactive_locked(args, workspace):
     from dotenv import dotenv_values
     from telethon import TelegramClient
     from telethon.errors import SessionPasswordNeededError
-    values = dotenv_values(args.credentials_env)
+    credentials_env = Path(__file__).resolve().parents[1] / "credentials" / "project.env"
+    values = dotenv_values(credentials_env)
     api_id = os.getenv("TELEGRAM_API_ID") or values.get("TELEGRAM_API_ID")
     api_hash = os.getenv("TELEGRAM_API_HASH") or values.get("TELEGRAM_API_HASH")
     if not api_id or not api_hash:
@@ -321,7 +322,6 @@ async def _interactive_locked(args, workspace):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workspace", type=Path, required=True)
-    parser.add_argument("--credentials-env", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--content-id", required=True)
     parser.add_argument("--login", action="store_true")

@@ -256,13 +256,6 @@ def _load_project_environment(root: Path) -> None:
                 os.environ[key] = value
                 loaded_from_project.add(key)
 
-    project_config = root / ".env"
-    if project_config.is_file():
-        for key, value in dotenv_values(project_config).items():
-            if key in LAB_ENV_ALLOWLIST and value is not None and key not in loaded_from_project:
-                os.environ.setdefault(key, value)
-
-
 def _require_executable(name: str, env_key: str, default: str) -> str:
     value = (os.getenv(env_key) or default).strip()
     if not value:
