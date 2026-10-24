@@ -3,7 +3,7 @@ param([string]$ReportPath = (Join-Path $env:TEMP "ArmoredAudioLab-unified-depend
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
-$Python = Join-Path $RepoRoot "runtime\.venv\Scripts\python.exe"
+$Python = Join-Path $RepoRoot ".venv\Scripts\python.exe"
 
 if (!(Test-Path -LiteralPath $Python -PathType Leaf)) {
     throw "Ambiente unificado nao encontrado: $Python"

@@ -3,11 +3,11 @@ setlocal EnableExtensions
 cd /d "%~dp0"
 
 set "ARMORED_ROOT=%~dp0."
-set "PYTHON=%ARMORED_ROOT%\runtime\.venv\Scripts\python.exe"
+set "PYTHON=%ARMORED_ROOT%\.venv\Scripts\python.exe"
 set "PYTHONPATH=%ARMORED_ROOT%;%PYTHONPATH%"
 
 if not exist "%PYTHON%" (
-  echo ERRO: ambiente virtual Python 3.11.9 nao encontrado em runtime\.venv.
+  echo ERRO: ambiente virtual Python 3.11.9 nao encontrado em .venv.
   exit /b 2
 )
 

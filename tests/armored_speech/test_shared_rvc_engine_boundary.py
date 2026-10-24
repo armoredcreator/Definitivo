@@ -12,7 +12,7 @@ def test_rvc_engine_is_owned_by_armoredspeech():
     assert rvc_engine.REPO_ROOT == repo_root
     assert rvc_engine.SPEECH_ROOT == speech_root
     assert Path(rvc_engine.__file__).resolve().parent == speech_root
-    assert rvc_engine.SHARED_ENV_DIR == repo_root / "runtime" / ".venv"
+    assert rvc_engine.SHARED_ENV_DIR == repo_root / ".venv"
     assert rvc_engine.BASE_DIR == speech_root
 
 
@@ -46,7 +46,7 @@ def test_shared_runtime_declares_exact_python_patch_before_installation():
     bootstrap = (repo_root / "scripts" / "bootstrap.ps1").read_text(encoding="utf-8")
     assert "$Version -ne 'Python 3.11.9'" in bootstrap
     assert "requirements-runtime311.lock.txt" in bootstrap
-    assert bootstrap.index("$Version -ne 'Python 3.11.9'") < bootstrap.index("-m venv runtime\\.venv")
+    assert bootstrap.index("$Version -ne 'Python 3.11.9'") < bootstrap.index("-m venv .venv")
     assert bootstrap.index("$Version -ne 'Python 3.11.9'") < bootstrap.index("-m pip install")
     assert not (repo_root / "ArmoredSpeech" / "setup_runtime.ps1").exists()
     assert not (repo_root / "ArmoredSpeech" / "requirements-analysis.txt").exists()

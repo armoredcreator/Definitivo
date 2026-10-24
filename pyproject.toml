@@ -25,5 +25,5 @@ exclude = [".venv*", "runtime/.venv*", "venv*", ".git*", "__pycache__*", ".pytes
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
-testpaths = ["ArmoredSpeech/tests", "tests"]
+testpaths = ["tests"]
 cache_dir = "storage/validation/.pytest_cache"

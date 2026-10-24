@@ -12,6 +12,13 @@ from .routing import RouteConfig, load_routes
 from .storage import project_root
 
 
+_CONTRACT_HUB_DESTINATIONS = {
+    "-1003788989075": ("-1004341972306", 228),
+    "-1002698134896": ("-1004341972306", 1160),
+    "-1002039708059": ("-1004341972306", 1327),
+}
+
+
 def _load_project_configuration(root: Path) -> None:
     credentials = root / "credentials" / "project.env"
     if credentials.is_file():
@@ -27,6 +34,14 @@ def _validate_routes(routes: tuple[RouteConfig, ...]) -> None:
         raise RuntimeError("Cada uma das três fontes deve ter um source_id único.")
     if len(set(destinations)) != 3:
         raise RuntimeError("Cada fonte deve apontar para um destino Hub próprio (chat e tópico únicos).")
+    actual = {
+        str(route.source.chat_id): (str(route.hub.chat_id), int(route.hub.topic_id))
+        for route in routes
+    }
+    if actual != _CONTRACT_HUB_DESTINATIONS:
+        raise RuntimeError(
+            "As três fontes devem usar exatamente os destinos Hub definidos no contrato."
+        )
 
 
 def main(argv: list[str] | None = None) -> int:

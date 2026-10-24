@@ -3,11 +3,10 @@ name: ArmoredSpeech real-audio diagnostics
 on:
   push:
     branches:
-      - refactor/ArmoredSpeech-directory-20261015
-      - test/armoredstudio-speech-integration-20261015
+      - main
     paths:
-      - "ArmoredSpeech/tests/diagnose_real_audio.py"
-      - "ArmoredSpeech/tests/validate_real_audio.py"
+      - "tests/armored_speech/diagnose_real_audio.py"
+      - "tests/armored_speech/validate_real_audio.py"
       - "ArmoredSpeech/audio_intelligence.py"
       - "ArmoredSpeech/model_processor.py"
       - "ArmoredSpeech/contracts.py"
@@ -64,5 +63,5 @@ jobs:
           ARMORED_AUDIO_COMPUTE_TYPE: int8
           ARMORED_AUDIO_CONTENT_NOISE_THRESHOLD: "0.05"
         run: |
-          python ArmoredSpeech/tests/diagnose_real_audio.py
-          python ArmoredSpeech/tests/validate_real_audio.py
+          python tests/armored_speech/diagnose_real_audio.py
+          python tests/armored_speech/validate_real_audio.py

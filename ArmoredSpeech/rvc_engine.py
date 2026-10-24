@@ -13,7 +13,7 @@ import sys
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SPEECH_ROOT = Path(__file__).resolve().parent
-SHARED_ENV_DIR = REPO_ROOT / "runtime" / ".venv"
+SHARED_ENV_DIR = REPO_ROOT / ".venv"
 # Single canonical owner: no runtime override or fallback can silently keep
 # loading model/index assets from ArmoredStudio. Local assets must be migrated
 # to ArmoredSpeech/runtime/rvc before the real RVC phase is enabled.
@@ -68,7 +68,7 @@ DEFAULT_OUTPUT = RVC_ROOT / "output" / "audio_rvc.wav"
 
 
 def resolver_rvc_python() -> Path:
-    """Resolve the single operational Python environment under runtime/.venv."""
+    """Resolve the single operational Python environment at the project root."""
     candidates = (
         SHARED_ENV_DIR / "Scripts" / "python.exe",
         SHARED_ENV_DIR / "bin" / "python",

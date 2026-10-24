@@ -48,11 +48,11 @@ Código, testes, scripts e o documento mestre são versionáveis. `.env.example`
 
 O caminho opcional `ARMORED_LEGACY_MEDIA_ROOT` aponta para `ArmoredCreator-final\storage`. É uma origem local confiável somente para leitura: Stock copia o original selecionado, confere estabilidade e SHA-256, e nunca move nem altera o arquivo antigo. Sem esta configuração, originais fora da raiz nova são recusados.
 
-Para transportar o projeto, instalar o código e provisionar separadamente: `credentials/project.env`, sessões Telegram, bancos SQLite e suas cópias, executável/runtime Telegram Bot API, pesos RVC e demais modelos, efeito de áudio em `ArmoredSpeech/assets/efeitosonoro.wav`, e eventuais originais necessários. O efeito é propriedade do Speech; o Studio não mantém cópia. Não transportar `runtime/.venv`; ele é recriado a partir do lock.
+Para transportar o projeto, instalar o código e provisionar separadamente: `credentials/project.env`, sessões Telegram, bancos SQLite e suas cópias, executável/runtime Telegram Bot API, pesos RVC e demais modelos, efeito de áudio em `ArmoredSpeech/assets/efeitosonoro.wav`, e eventuais originais necessários. O efeito é propriedade do Speech; o Studio não mantém cópia. Não transportar `.venv`; ele é recriado a partir do lock.
 
 ## Python e instalação
 
-O runtime suportado é Windows amd64 com Python **3.11.9**, em um único ambiente `runtime/.venv`. Dependências fixadas estão em `requirements-runtime311.lock.txt`; Fairseq/RVC localizados e revisados ficam em `runtime/packages/rvc311`. Os fontes/hash usados para construir a wheel RVC são registrados em `runtime/packages/sources`.
+O runtime suportado é Windows amd64 com Python **3.11.9**, em um único ambiente `.venv` na raiz do projeto. Dependências fixadas estão em `requirements-runtime311.lock.txt`; Fairseq/RVC localizados e revisados ficam em `runtime/packages/rvc311`. Os fontes/hash usados para construir a wheel RVC são registrados em `runtime/packages/sources`.
 
 No PowerShell, a partir da raiz do repositório:
 
@@ -60,11 +60,19 @@ No PowerShell, a partir da raiz do repositório:
 .\scripts\bootstrap.ps1
 ```
 
-O script recusa uma versão Python diferente ou `runtime/.venv` já existente; instala o lock e o pacote, e termina com `pip check`. Se já houver ambiente, inspecione-o antes de qualquer ação. FFmpeg, Bot API e modelos de áudio são dependências locais/nativas e não criam outro ambiente Python. Modelos de classificação/Whisper ficam em `runtime/models/audio/` (atualmente cerca de 425 MB locais); o preflight valida a presença sem baixar nem executar inferência.
+O script recusa uma versão Python diferente ou `.venv` já existente; instala o lock e o pacote, e termina com `pip check`. Se já houver ambiente, inspecione-o antes de qualquer ação. FFmpeg, Bot API e modelos de áudio são dependências locais/nativas e não criam outro ambiente Python. Modelos de classificação/Whisper ficam em `runtime/models/audio/` (atualmente cerca de 425 MB locais); o preflight valida a presença sem baixar nem executar inferência.
 
 ## Configuração de Telegram e limites externos
 
 Preencha os segredos e IDs em `credentials/project.env`; use `.env.example` apenas como referência sem segredos. Configure as três fontes e as três rotas de destino conforme contrato. `BOT_API_EXE` pode apontar para `runtime/telegram-bot-api/telegram-bot-api.exe` dentro da raiz, usando o executável local validado.
+
+As associações são fixas e também são impostas pelo validador de configuração; não basta que os três destinos sejam distintos:
+
+| Fonte | Chat de destino | Tópico |
+| --- | --- | ---: |
+| `-1003788989075` | `-1004341972306` | 228 |
+| `-1002698134896` | `-1004341972306` | 1160 |
+| `-1002039708059` | `-1004341972306` | 1327 |
 
 `START_ALL.bat` sem argumento executa preflight e validação de configuração. `--run` ou `--continuous` inicia o Coordinator; Hub real requer o comando/opção explícita de publicação do CLI. Consultas comerciais também dependem da flag, autorização estável, orçamento, evidência e validade. O programa não deve inferir autorização a partir de credenciais presentes.
 
@@ -80,11 +88,11 @@ O limite de produção é estrito: um vídeo por vez, sem paralelo de FFmpeg, se
 
 ## START ALL
 
-`START_ALL.bat` é o único ponto de entrada de usuário. Confere `runtime/.venv` 3.11.9, credenciais e preflight dos módulos/runtime; por padrão valida, sem iniciar produção, Bot API, buscas Shopee ou publicação. O launcher do Coordinator e as ferramentas de auditoria ficam em `scripts/` e são componentes internos, não atalhos de produção.
+`START_ALL.bat` é o único ponto de entrada de usuário. Confere `.venv` 3.11.9, credenciais e preflight dos módulos/runtime; por padrão valida, sem iniciar produção, Bot API, buscas Shopee ou publicação. O launcher do Coordinator e as ferramentas de auditoria ficam em `scripts/` e são componentes internos, não atalhos de produção.
 
 ## Validação de entrega
 
-Valide no `runtime/.venv` novo:
+Valide no `.venv` novo:
 
 1. `python -m pip check` sem conflitos.
 2. Suíte completa com `python -m pytest`.

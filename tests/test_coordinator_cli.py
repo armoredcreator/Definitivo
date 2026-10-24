@@ -11,11 +11,16 @@ def _three_routes(monkeypatch):
     monkeypatch.setenv("TELEGRAM_API_ID", "12345")
     monkeypatch.setenv("TELEGRAM_API_HASH", "secret-test-value")
     monkeypatch.setenv("ARMORED_REQUIRED_SOURCE_COUNT", "3")
-    for index in range(1, 4):
-        monkeypatch.setenv(f"ARMORED_SOURCE_{index}_CHAT_ID", f"-10000000000{index}")
+    routes = (
+        ("-1003788989075", 228),
+        ("-1002698134896", 1160),
+        ("-1002039708059", 1327),
+    )
+    for index, (source_chat, topic) in enumerate(routes, start=1):
+        monkeypatch.setenv(f"ARMORED_SOURCE_{index}_CHAT_ID", source_chat)
         monkeypatch.setenv(f"ARMORED_SOURCE_{index}_ID", f"source-{index}")
-        monkeypatch.setenv(f"ARMORED_HUB_{index}_CHAT_ID", f"-20000000000{index}")
-        monkeypatch.setenv(f"ARMORED_HUB_{index}_TOPIC_ID", str(index))
+        monkeypatch.setenv(f"ARMORED_HUB_{index}_CHAT_ID", "-1004341972306")
+        monkeypatch.setenv(f"ARMORED_HUB_{index}_TOPIC_ID", str(topic))
 
 
 def test_validate_config_uses_three_routes_without_opening_database_or_telegram(tmp_path: Path, monkeypatch, capsys):
@@ -93,7 +98,13 @@ def test_run_requires_explicit_bounded_budget_and_rejects_live_cycles(tmp_path: 
 
 def test_validate_config_rejects_duplicate_hub_destination(tmp_path: Path, monkeypatch, capsys):
     _three_routes(monkeypatch)
-    monkeypatch.setenv("ARMORED_HUB_3_CHAT_ID", "-200000000001")
-    monkeypatch.setenv("ARMORED_HUB_3_TOPIC_ID", "1")
+    monkeypatch.setenv("ARMORED_HUB_3_TOPIC_ID", "1160")
     assert main(["--root", str(tmp_path), "--validate-config"]) == 2
     assert "destino Hub próprio" in capsys.readouterr().err
+
+
+def test_validate_config_rejects_contract_route_mismatch(tmp_path: Path, monkeypatch, capsys):
+    _three_routes(monkeypatch)
+    monkeypatch.setenv("ARMORED_HUB_2_TOPIC_ID", "999")
+    assert main(["--root", str(tmp_path), "--validate-config"]) == 2
+    assert "exatamente os destinos Hub definidos no contrato" in capsys.readouterr().err

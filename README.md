@@ -8,7 +8,7 @@ O `START_ALL.bat` é o único ponto de entrada operacional. Sem argumentos, exec
 
 ## Instalação
 
-O runtime usa Python 3.11.9 em um único ambiente `runtime/.venv`. Tokens, chaves, configurações privadas e sessões Telegram ficam em `credentials/`; esse diretório é local e nunca é enviado ao Git. O Telegram Bot API nativo também fica organizado em `runtime/telegram-bot-api/`.
+O runtime usa Python 3.11.9 em um único ambiente `.venv`. Tokens, chaves, configurações privadas e sessões Telegram ficam em `credentials/`; esse diretório é local e nunca é enviado ao Git. O Telegram Bot API nativo também fica organizado em `runtime/telegram-bot-api/`.
 
 ## Documentação
 
