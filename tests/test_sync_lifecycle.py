@@ -292,7 +292,7 @@ class SyncLifecycleTests(unittest.TestCase):
             "https://s.shopee.com.br/test-link/fixture-03",
         )
 
-    def test_historical_grouped_two_videos_one_link_emits_one_candidate(self):
+    def test_historical_grouped_two_videos_one_link_preserves_both_identities(self):
         source = CandidateSource(Path("."), FakeReader())
 
         async def grouped_messages(source_name, topic_id):
@@ -323,11 +323,12 @@ class SyncLifecycleTests(unittest.TestCase):
 
         asyncio.run(collect())
 
-        self.assertEqual([candidate[0] for candidate in candidates], [491])
+        self.assertEqual([candidate[0] for candidate in candidates], [491, 492])
         self.assertEqual(
             candidates[0][4],
             "https://s.shopee.com.br/test-link/fixture-05",
         )
+        self.assertEqual(candidates[1][4], candidates[0][4])
 
     def test_live_candidate_resolves_link_inside_group_and_advances_group_checkpoint(self):
         with tempfile.TemporaryDirectory() as td:
@@ -564,7 +565,7 @@ class SyncLifecycleTests(unittest.TestCase):
             self.assertEqual(second_cp, {567: 102})
             db.close()
 
-    def test_live_duplicate_shopee_url_advances_safe_checkpoint_without_materializing(self):
+    def test_live_duplicate_shopee_url_is_reserved_without_materializing(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             storage = Storage(root)
@@ -609,8 +610,20 @@ class SyncLifecycleTests(unittest.TestCase):
                 else:
                     os.environ["ARMORED_SYNC_SOURCE"] = previous
 
-            self.assertIsNone(message)
+            self.assertIsNotNone(message)
+            self.assertEqual(message.telegram_message_id, "100")
+            self.assertEqual(message.original_url, "https://s.shopee.com.br/test-link/fixture-12")
             self.assertEqual(checkpoints, {567: 100})
+            from armored_core.services import IngestMessage, SyncService
+            item_id = SyncService(db, storage).reserve_message(IngestMessage(
+                telegram_message_id=message.telegram_message_id,
+                source_id=message.source_id,
+                topic_id=message.topic_id,
+                topic_name=message.topic_name,
+                original_url=message.original_url,
+                materialize=message.materialize,
+            ))
+            self.assertEqual(db.get(item_id).state.value, "DUPLICATE")
             db.close()
 
     def test_coordinator_runs_history_then_live_with_same_source(self):

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from armored_core.coordinator import Coordinator
 from armored_core.models import State
+from armored_core.routing import load_routes, validate_contract_routes
 
 
 ROUTE_TOPIC_BY_SOURCE_ID = {
@@ -68,13 +69,20 @@ class RealTelegramE2ETests(unittest.TestCase):
             self.assertIsNotNone(item_id, "Telegram source returned no eligible video")
 
             current = coordinator.db.get(str(item_id))
-            expected_topic = ROUTE_TOPIC_BY_SOURCE_ID.get(str(current.source_id))
+            routes = validate_contract_routes(load_routes())
+            route = next(
+                (candidate for candidate in routes if candidate.source.source_id == str(current.source_id)),
+                None,
+            )
             self.assertIsNotNone(
-                expected_topic,
+                route,
                 f"Source {current.source_id!r} is outside the Definitivo route contract",
             )
-            self.assertEqual(int(current.topic_id), expected_topic)
-            self.assertEqual(expected_topic, int(authorized_topic))
+            # The ingested topic belongs to the source forum. The authorized
+            # topic belongs to the Hub destination; validate each independently.
+            self.assertIsNotNone(current.topic_id, "Telegram source topic was not persisted")
+            self.assertGreater(int(current.topic_id), 0)
+            self.assertEqual(int(route.hub.topic_id), int(authorized_topic))
             if current.state == State.FAILED:
                 coordinator.recover(str(item_id))
             else:
@@ -89,6 +97,8 @@ class RealTelegramE2ETests(unittest.TestCase):
             self.assertIsNotNone(publication)
             self.assertEqual(int(publication["confirmed"]), 1)
             self.assertTrue(str(publication["published_message_id"]).isdigit())
+            self.assertEqual(str(publication["destination_chat_id"]), str(route.hub.chat_id))
+            self.assertEqual(int(publication["destination_topic_id"]), int(route.hub.topic_id))
 
             before = publication["published_message_id"]
             coordinator.run(str(item_id))

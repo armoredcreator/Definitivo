@@ -20,7 +20,7 @@ from .recovery import Recovery
 from .services import IngestMessage, SyncService
 from .startup_audit import StartupReconciler
 from .storage import Storage
-from .routing import load_routes
+from .routing import load_routes, validate_contract_routes
 
 
 class Coordinator:
@@ -206,7 +206,7 @@ class Coordinator:
                 from ArmoredSync.service import LocalSource, TelegramReader, TelegramSource, MultiTelegramSource
 
                 vision = ArmoredVision(db=db)
-                routes = load_routes()
+                routes = validate_contract_routes(load_routes())
                 if staged and len(routes) != 3:
                     raise RuntimeError(
                         "Execução por etapas exige exatamente 3 fontes Telegram; "
@@ -348,6 +348,7 @@ class Coordinator:
             original_url=getattr(message, "original_url", None),
             source_path=getattr(message, "source_path", None),
             materialize=getattr(message, "materialize", None),
+            grouped_id=getattr(message, "grouped_id", None),
         ))
         if self.publication_quarantine.contains(str(item_id)):
             await self._release_source_connection()
@@ -384,6 +385,7 @@ class Coordinator:
             original_url=getattr(message, "original_url", None),
             source_path=getattr(message, "source_path", None),
             materialize=getattr(message, "materialize", None),
+            grouped_id=getattr(message, "grouped_id", None),
         ))
         if self.publication_quarantine.contains(str(item_id)):
             reader = getattr(self.source, "reader", None)
@@ -417,6 +419,7 @@ class Coordinator:
             original_url=getattr(message, "original_url", None),
             source_path=getattr(message, "source_path", None),
             materialize=getattr(message, "materialize", None),
+            grouped_id=getattr(message, "grouped_id", None),
         )
         # Test doubles/subclasses that override Coordinator.run() are part of
         # the original lifecycle contract: let them receive a normally materialized
@@ -559,6 +562,7 @@ class Coordinator:
             original_url=getattr(message, "original_url", None),
             source_path=getattr(message, "source_path", None),
             materialize=getattr(message, "materialize", None),
+            grouped_id=getattr(message, "grouped_id", None),
         )
         item_id = str(self.sync.reserve_message(ingest))
         current = self.db.get(item_id)
@@ -712,6 +716,7 @@ class Coordinator:
                             original_url=getattr(message, "original_url", None),
                             source_path=getattr(message, "source_path", None),
                             materialize=getattr(message, "materialize", None),
+                            grouped_id=getattr(message, "grouped_id", None),
                         )
                         item_id = str(self.sync.reserve_message(ingest))
                         if self.catch_up_budget is not None:
@@ -1565,6 +1570,7 @@ class Coordinator:
                 original_url=getattr(message, "original_url", None),
                 source_path=getattr(message, "source_path", None),
                 materialize=getattr(message, "materialize", None),
+                grouped_id=getattr(message, "grouped_id", None),
             )
             item_id = str(self.sync.reserve_message(reservation))
             if not self.continuous_budget.try_claim(item_id):

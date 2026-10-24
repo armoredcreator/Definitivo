@@ -150,6 +150,7 @@ class Database:
             source_id TEXT NOT NULL DEFAULT 'telegram',
             topic_id INTEGER,
             topic_name TEXT,
+            grouped_id INTEGER,
             original_url TEXT,
             state TEXT NOT NULL,
             original_path TEXT NOT NULL,
@@ -302,6 +303,7 @@ class Database:
                 ("source_id", "ALTER TABLE items ADD COLUMN source_id TEXT NOT NULL DEFAULT 'telegram'"),
                 ("topic_id", "ALTER TABLE items ADD COLUMN topic_id INTEGER"),
                 ("topic_name", "ALTER TABLE items ADD COLUMN topic_name TEXT"),
+                ("grouped_id", "ALTER TABLE items ADD COLUMN grouped_id INTEGER"),
                 ("original_url", "ALTER TABLE items ADD COLUMN original_url TEXT"),
                 ("original_sha256", "ALTER TABLE items ADD COLUMN original_sha256 TEXT"),
                 ("publication_caption", "ALTER TABLE items ADD COLUMN publication_caption TEXT"),
@@ -350,6 +352,7 @@ class Database:
                     source_id TEXT NOT NULL DEFAULT 'telegram',
                     topic_id INTEGER,
                     topic_name TEXT,
+                    grouped_id INTEGER,
                     original_url TEXT,
                     state TEXT NOT NULL,
                     original_path TEXT NOT NULL,
@@ -371,7 +374,7 @@ class Database:
                 )
             """)
             columns = [
-                "content_id","telegram_message_id","source_id","topic_id","topic_name",
+                "content_id","telegram_message_id","source_id","topic_id","topic_name","grouped_id",
                 "original_url","state","original_path","original_sha256","working_path",
                 "result_path","affiliate_name","affiliate_url","publication_caption",
                 "ia_context_json","affiliate_urls_json","attempts","recovery_count",
@@ -524,6 +527,7 @@ class Database:
         topic_name: str | None = None,
         original_url: str | None = None,
         original_path: Path | None = None,
+        grouped_id: int | None = None,
     ) -> str:
         """Atomically reserve message identity and suppress global raw-URL duplicates.
 
@@ -570,10 +574,10 @@ class Database:
             )
             self.conn.execute(
                 "INSERT INTO items (content_id,telegram_message_id,source_id,topic_id,"
-                "topic_name,original_url,state,original_path,duplicate_of_content_id,last_error) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "topic_name,grouped_id,original_url,state,original_path,duplicate_of_content_id,last_error) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (
-                    content_id, message, source, topic_id, topic_name, url,
+                    content_id, message, source, topic_id, topic_name, grouped_id, url,
                     state.value, str(original_path or ""), duplicate_owner,
                     reason if duplicate_owner else None,
                 ),
@@ -664,6 +668,13 @@ class Database:
         )
         self.conn.commit()
 
+    def set_grouped_id(self, item_id: str, grouped_id: int) -> None:
+        self.conn.execute(
+            "UPDATE items SET grouped_id=COALESCE(grouped_id,?), updated_at=CURRENT_TIMESTAMP WHERE content_id=?",
+            (int(grouped_id), str(item_id)),
+        )
+        self.conn.commit()
+
     def finalize_original_path(self, item_id: str, path: Path, sha256: str) -> None:
         self.conn.execute(
             "UPDATE items SET original_path=?, original_sha256=?, updated_at=CURRENT_TIMESTAMP WHERE content_id=?",
@@ -678,6 +689,7 @@ class Database:
         self, telegram_message_id: str, original_path: Path,
         source_id: str = "telegram", topic_id: int | None = None,
         topic_name: str | None = None, original_url: str | None = None,
+        grouped_id: int | None = None,
     ) -> str:
         """Compatibility alias that obeys the same atomic ingest identity rules."""
         return self.reserve_item(
@@ -685,6 +697,7 @@ class Database:
             source_id=source_id,
             topic_id=topic_id,
             topic_name=topic_name,
+            grouped_id=grouped_id,
             original_url=original_url,
             original_path=original_path,
         )
@@ -715,6 +728,7 @@ class Database:
             tuple(json.loads(row["affiliate_urls_json"] or "[]")),
             json.loads(row["ia_context_json"] or "{}"),
             row["duplicate_of_content_id"],
+            row["grouped_id"],
         )
 
     def pending_vision_approved_items(self) -> list[Item]:

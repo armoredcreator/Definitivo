@@ -75,6 +75,7 @@ class IngestMessage:
     original_url: str | None = None
     source_path: Path | None = None
     materialize: Callable[[Path], None] | Callable[[Path], Awaitable[None]] | None = None
+    grouped_id: int | None = None
 
 class SyncService:
     def __init__(self, db: Database, storage: Storage) -> None:
@@ -89,6 +90,8 @@ class SyncService:
         ).fetchone()
         if existing:
             item_id = str(existing["content_id"])
+            if message.grouped_id is not None:
+                self.db.set_grouped_id(item_id, message.grouped_id)
             stored_path = str(existing["original_path"] or "").strip()
             if stored_path:
                 original = Path(stored_path)
@@ -121,6 +124,7 @@ class SyncService:
             topic_name=message.topic_name,
             original_url=message.original_url,
             original_path=original,
+            grouped_id=message.grouped_id,
         )
         partial = original.with_suffix(original.suffix + ".part")
         return item_id, original, partial
@@ -186,6 +190,8 @@ class SyncService:
         ).fetchone()
         if existing:
             item_id = str(existing["content_id"])
+            if message.grouped_id is not None:
+                self.db.set_grouped_id(item_id, message.grouped_id)
             stored_url = str(existing["original_url"] or "").strip()
             incoming_url = str(message.original_url or "").strip()
             if not stored_url and incoming_url:
@@ -213,7 +219,8 @@ class SyncService:
         item_id = self.db.content_id_for(message.telegram_message_id, message.source_id)
         original = self.storage.original(item_id, suffix, original_url=message.original_url, source_id=message.source_id)
         self.db.reserve_item(message.telegram_message_id, source_id=message.source_id, topic_id=message.topic_id,
-                             topic_name=message.topic_name, original_url=message.original_url, original_path=original)
+                             topic_name=message.topic_name, original_url=message.original_url, original_path=original,
+                             grouped_id=message.grouped_id)
         return item_id
 
     async def materialize_message_async(self, message: IngestMessage) -> int:

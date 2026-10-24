@@ -24,6 +24,7 @@ class SyncMessage:
     original_url: str | None = None
     source_path: Path | None = None
     materialize: Any | None = None
+    grouped_id: int | None = None
 
 
 class LocalSource:
@@ -724,6 +725,7 @@ class TelegramSource:
                 topic_id=topic_id,
                 topic_name=topic_name,
                 original_url=original_url,
+                grouped_id=getattr(message, "grouped_id", None),
                 materialize=lambda target, m=message: self._download_to(m, target),
             )
         if self._historical_materialization_failed:
@@ -762,22 +764,16 @@ class TelegramSource:
 
         if len(unique_links) == 1:
             original_url = next(iter(unique_links.values()))
-            if self._shopee_url_exists(original_url):
-                return []
-            linked_videos = [
-                message for message in videos if self._shopee_url(message) is not None
+            # Keep every Telegram video identity in the album. The database
+            # will mark repeated URLs DUPLICATE without losing the message.
+            return [
+                (int(getattr(message, "id", 0) or 0), int(topic_id), topic_name, message, original_url)
+                for message in sorted(videos, key=lambda value: int(getattr(value, "id", 0) or 0))
+                if int(getattr(message, "id", 0) or 0) > 0
+                and int(getattr(message, "id", 0) or 0) not in self._seen
             ]
-            selected = min(
-                linked_videos or videos,
-                key=lambda message: int(getattr(message, "id", 0) or 0),
-            )
-            selected_id = int(getattr(selected, "id", 0) or 0)
-            if selected_id <= 0 or selected_id in self._seen:
-                return []
-            return [(selected_id, int(topic_id), topic_name, selected, original_url)]
 
         candidates: list[tuple[int, int, str, Any, str | None]] = []
-        emitted_links: set[str] = set()
         for message in sorted(
             videos,
             key=lambda value: int(getattr(value, "id", 0) or 0),
@@ -787,10 +783,6 @@ class TelegramSource:
                 continue
             url = self._shopee_url(message)
             if url:
-                key = url.casefold()
-                if key in emitted_links or self._shopee_url_exists(url):
-                    continue
-                emitted_links.add(key)
                 candidates.append((message_id, int(topic_id), topic_name, message, url))
             elif not unique_links:
                 candidates.append((message_id, int(topic_id), topic_name, message, None))
@@ -872,14 +864,13 @@ class TelegramSource:
                     )
                     if pending_id not in self._seen:
                         if original_url:
-                            if not self._shopee_url_exists(original_url):
-                                yield (
-                                    pending_id,
-                                    int(topic_id),
-                                    topic_name,
-                                    pending_message,
-                                    original_url,
-                                )
+                            yield (
+                                pending_id,
+                                int(topic_id),
+                                topic_name,
+                                pending_message,
+                                original_url,
+                            )
                         else:
                             # Keep every video in SQLite even without a nearby
                             # product URL; Vision will place it in WAITING_VISION.
@@ -906,10 +897,7 @@ class TelegramSource:
                 original_url = self._shopee_url(message)
                 if original_url is not None:
                     pending_link = None
-                    if (
-                        message_id not in self._seen
-                        and not self._shopee_url_exists(original_url)
-                    ):
+                    if message_id not in self._seen:
                         yield (
                             message_id,
                             int(topic_id),
@@ -922,10 +910,7 @@ class TelegramSource:
                 if pending_link is not None:
                     original_url = pending_link
                     pending_link = None
-                    if (
-                        message_id not in self._seen
-                        and not self._shopee_url_exists(original_url)
-                    ):
+                    if message_id not in self._seen:
                         yield (
                             message_id,
                             int(topic_id),
@@ -996,6 +981,7 @@ class TelegramSource:
                     topic_id=topic_id,
                     topic_name=topic_name,
                     original_url=original_url,
+                    grouped_id=getattr(message, "grouped_id", None),
                     materialize=lambda target, m=message: self._download_to(m, target),
                 )
             self._historical_scan_exhausted = True
@@ -1035,6 +1021,7 @@ class TelegramSource:
                     topic_id=topic_id,
                     topic_name=topic_name,
                     original_url=original_url,
+                    grouped_id=getattr(message, "grouped_id", None),
                     materialize=lambda target, m=message: self._download_to(m, target),
                 ))
             self._historical_scan_exhausted = True
@@ -1124,6 +1111,7 @@ class TelegramSource:
                                     topic_id=topic_id,
                                     topic_name=topic_name,
                                     original_url=original_url,
+                                    grouped_id=getattr(candidate_message, "grouped_id", None),
                                     materialize=lambda target, m=candidate_message: self._download_to(m, target),
                                 ))
                                 if limit is not None and len(candidates) >= limit:
@@ -1137,20 +1125,17 @@ class TelegramSource:
                             next_message = messages[index + 1]
                             if not self._is_video_message(next_message):
                                 original_url = self._shopee_url(next_message)
-                        if (
-                            original_url is None
-                            or not self._shopee_url_exists(original_url)
-                        ):
-                            candidates.append(SyncMessage(
-                                telegram_message_id=str(message_id),
-                                source_id=source_id,
-                                topic_id=topic_id,
-                                topic_name=topic_name,
-                                original_url=original_url,
-                                materialize=lambda target, m=message: self._download_to(m, target),
-                            ))
-                            if limit is not None and len(candidates) >= limit:
-                                return candidates, checkpoints
+                        candidates.append(SyncMessage(
+                            telegram_message_id=str(message_id),
+                            source_id=source_id,
+                            topic_id=topic_id,
+                            topic_name=topic_name,
+                            original_url=original_url,
+                            grouped_id=getattr(message, "grouped_id", None),
+                            materialize=lambda target, m=message: self._download_to(m, target),
+                        ))
+                        if limit is not None and len(candidates) >= limit:
+                            return candidates, checkpoints
                     index += 1
 
             return candidates, checkpoints
@@ -1260,6 +1245,7 @@ class TelegramSource:
                                 topic_id=topic_id,
                                 topic_name=topic_name,
                                 original_url=original_url,
+                                grouped_id=getattr(candidate_message, "grouped_id", None),
                                 materialize=lambda target, m=candidate_message:
                                     self._download_to(m, target),
                             ),
@@ -1284,11 +1270,6 @@ class TelegramSource:
                     if not self._is_video_message(next_message):
                         original_url = self._shopee_url(next_message)
 
-                if original_url is not None and self._shopee_url_exists(original_url):
-                    safe_checkpoint = max(safe_checkpoint, message_id)
-                    index += 1
-                    continue
-
                 return (
                     SyncMessage(
                         telegram_message_id=str(message_id),
@@ -1296,6 +1277,7 @@ class TelegramSource:
                         topic_id=topic_id,
                         topic_name=topic_name,
                         original_url=original_url,
+                        grouped_id=getattr(message, "grouped_id", None),
                         materialize=lambda target, m=message:
                             self._download_to(m, target),
                     ),

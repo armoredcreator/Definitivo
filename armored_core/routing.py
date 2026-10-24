@@ -24,6 +24,31 @@ class RouteConfig:
     hub: HubConfig
 
 
+CONTRACT_HUB_DESTINATIONS = {
+    "-1003788989075": ("-1004341972306", 228),
+    "-1002698134896": ("-1004341972306", 1160),
+    "-1002039708059": ("-1004341972306", 1327),
+}
+
+
+def validate_contract_routes(routes: tuple[RouteConfig, ...]) -> tuple[RouteConfig, ...]:
+    if len(routes) != 3:
+        raise RuntimeError(f"O Coordinator final exige exatamente 3 fontes configuradas; encontradas {len(routes)}.")
+    source_ids = [route.source.source_id for route in routes]
+    destinations = [(route.hub.chat_id, route.hub.topic_id) for route in routes]
+    if len(set(source_ids)) != 3:
+        raise RuntimeError("Cada uma das três fontes deve ter um source_id único.")
+    if len(set(destinations)) != 3:
+        raise RuntimeError("Cada fonte deve apontar para um destino Hub próprio (chat e tópico únicos).")
+    actual = {
+        str(route.source.chat_id): (str(route.hub.chat_id), int(route.hub.topic_id))
+        for route in routes
+    }
+    if actual != CONTRACT_HUB_DESTINATIONS:
+        raise RuntimeError("As três fontes devem usar exatamente os destinos Hub definidos no contrato.")
+    return routes
+
+
 def _required(name: str) -> str:
     value = (os.getenv(name) or "").strip()
     if not value:

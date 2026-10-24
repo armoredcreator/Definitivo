@@ -46,6 +46,7 @@ class Item:
     affiliate_urls: tuple[str, ...] = ()
     ia_context: dict | None = None
     duplicate_of_content_id: str | None = None
+    grouped_id: int | None = None
 
     @property
     def item_id(self) -> str:

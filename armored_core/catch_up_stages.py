@@ -106,6 +106,7 @@ async def run_catch_up_stage(coordinator: Any, stage: str) -> dict[str, Any]:
                         original_url=getattr(message, "original_url", None),
                         source_path=getattr(message, "source_path", None),
                         materialize=getattr(message, "materialize", None),
+                        grouped_id=getattr(message, "grouped_id", None),
                     )
                     item_id = str(coordinator.sync.reserve_message(ingest))
                     marker = getattr(source, "mark_ingested", None)

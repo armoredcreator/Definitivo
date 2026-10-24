@@ -18,6 +18,19 @@ from .routing import RouteConfig, load_routes
 from .storage import Storage
 
 
+def _archived_item_count(connection: sqlite3.Connection) -> int:
+    """The archive table is optional until a database compaction is run."""
+    exists = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        ("reconciliation_archived_items",),
+    ).fetchone()
+    if exists is None:
+        return 0
+    return int(connection.execute(
+        "SELECT COUNT(*) FROM reconciliation_archived_items"
+    ).fetchone()[0])
+
+
 def run_preflight(root: Path, evidence_path: Path) -> dict:
     """Compose the production services over a SQLite backup without external I/O."""
     root = root.expanduser().resolve(strict=True)
@@ -113,7 +126,7 @@ def run_preflight(root: Path, evidence_path: Path) -> dict:
                 foreign_keys = clone.execute("PRAGMA foreign_key_check").fetchall()
                 counts = {
                     "items": clone.execute("SELECT COUNT(*) FROM items").fetchone()[0],
-                    "archived": clone.execute("SELECT COUNT(*) FROM reconciliation_archived_items").fetchone()[0],
+                    "archived": _archived_item_count(clone),
                     "publications": clone.execute("SELECT COUNT(*) FROM publications").fetchone()[0],
                 }
             if integrity != [("ok",)] or foreign_keys:
