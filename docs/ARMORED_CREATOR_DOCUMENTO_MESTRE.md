@@ -178,6 +178,6 @@ Continuam pendentes: aprovar um novo item Vision com oferta afiliada válida; am
 | Sincronização histórica | **Pendente.** Duas leituras retomáveis; a primeira inseriu mensagens novas e a segunda foi idempotente, mas ambas foram interrompidas sem completar a varredura. As três fontes continuam `historical_complete=0`. |
 | Estabilidade prolongada | **Pendente.** Uma produção real foi concluída; a memória de trabalho observada nessa execução chegou a aproximadamente 2,7 GB. Não foi executado ensaio prolongado de descoberta/produção concorrentes no notebook. |
 | Portabilidade | **Parcial.** Bootstrap reproduzido em checkout isolado no mesmo notebook; não houve segundo computador Windows para validar portabilidade física. |
-| CI remoto da revisão atual | **Pendente.** As mudanças locais de Policy e documento ainda precisam ser publicadas e aprovadas pelo CI antes de declarar igualdade com `origin/main`. |
+| CI remoto do commit `7563493` | **Aprovado.** Workflow `Definitivo CI` no Windows: execução 40200127503 concluída com sucesso. A instalação local foi comparada com `origin/main` pelo verificador de integridade. |
 
-Evidência estruturada: `storage/validation/completion-certification-2026-10-25.json` (local, ignorada pelo Git). A sincronização histórica, o ensaio prolongado e o CI remoto da revisão atual são requisitos remanescentes; a Fase 15 não está certificada como concluída.
+Evidência estruturada: `storage/validation/completion-certification-2026-10-25.json` (local, ignorada pelo Git). A sincronização histórica e o ensaio prolongado são requisitos remanescentes; a Fase 15 não está certificada como concluída.
