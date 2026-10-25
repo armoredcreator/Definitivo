@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import hashlib
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -550,6 +551,40 @@ class Database:
                 return str(existing["content_id"])
 
             content_id = self.content_id_for(message, source)
+
+            # Physical compaction keeps the full duplicate row in a reversible
+            # archive. A Telegram rescan must not turn that archived duplicate
+            # back into fresh RECEIVED work.
+            archived = self._archived_duplicate_record(content_id=content_id)
+            if archived is not None:
+                owner = str(archived.get("duplicate_of_content_id") or "").strip()
+                if not owner or owner == content_id:
+                    raise RuntimeError("archived-duplicate-owner-invalid")
+                owner_exists = self.conn.execute(
+                    "SELECT 1 FROM items WHERE content_id=?", (owner,)
+                ).fetchone()
+                if owner_exists is None:
+                    raise RuntimeError("archived-duplicate-owner-missing")
+                restored_url = url or str(archived.get("original_url") or "").strip() or None
+                reason = f"historical-archive-reserved-as-duplicate:{owner}"
+                self.conn.execute(
+                    "INSERT INTO items (content_id,telegram_message_id,source_id,topic_id,"
+                    "topic_name,grouped_id,original_url,state,original_path,duplicate_of_content_id,last_error) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        content_id, message, source, topic_id, topic_name, grouped_id,
+                        restored_url, State.DUPLICATE.value, str(original_path or ""),
+                        owner, reason,
+                    ),
+                )
+                self.conn.execute(
+                    "INSERT INTO state_events(content_id,old_state,new_state,reason) "
+                    "VALUES (?,NULL,?,?)",
+                    (content_id, State.DUPLICATE.value, reason),
+                )
+                self.conn.commit()
+                return content_id
+
             duplicate_owner = None
             if url:
                 prior = self.conn.execute(
@@ -565,6 +600,19 @@ class Database:
                     )
                     if duplicate_owner == content_id:
                         duplicate_owner = None
+
+                if duplicate_owner is None:
+                    archived_prior = self._archived_duplicate_record(original_url=url)
+                    if archived_prior is not None:
+                        duplicate_owner = str(
+                            archived_prior.get("duplicate_of_content_id") or ""
+                        ).strip() or None
+                        if duplicate_owner == content_id:
+                            duplicate_owner = None
+                        if duplicate_owner and self.conn.execute(
+                            "SELECT 1 FROM items WHERE content_id=?", (duplicate_owner,)
+                        ).fetchone() is None:
+                            raise RuntimeError("archived-duplicate-owner-missing")
 
             state = State.DUPLICATE if duplicate_owner else State.RECEIVED
             reason = (
@@ -592,6 +640,53 @@ class Database:
         except BaseException:
             self.conn.rollback()
             raise
+
+    def _archived_duplicate_record(
+        self,
+        *,
+        content_id: str | None = None,
+        original_url: str | None = None,
+    ) -> dict | None:
+        """Return a hash-verified compacted duplicate snapshot, if present."""
+        table_exists = self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='reconciliation_archived_items'"
+        ).fetchone()
+        if table_exists is None:
+            return None
+        if content_id is not None:
+            row = self.conn.execute(
+                "SELECT content_id,item_json,item_sha256 FROM reconciliation_archived_items "
+                "WHERE content_id=?",
+                (str(content_id),),
+            ).fetchone()
+        elif original_url is not None:
+            row = self.conn.execute(
+                "SELECT content_id,item_json,item_sha256 FROM reconciliation_archived_items "
+                "WHERE LOWER(TRIM(json_extract(item_json,'$.original_url')))="
+                "LOWER(TRIM(?)) ORDER BY content_id LIMIT 1",
+                (str(original_url),),
+            ).fetchone()
+        else:
+            return None
+        if row is None:
+            return None
+        payload = str(row["item_json"])
+        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        if digest != str(row["item_sha256"]):
+            raise RuntimeError("archived-item-payload-hash-mismatch")
+        value = json.loads(payload)
+        if (
+            not isinstance(value, dict)
+            or str(value.get("content_id") or "") != str(row["content_id"])
+            or str(value.get("state") or "") != State.DUPLICATE.value
+        ):
+            raise RuntimeError("archived-sync-target-is-not-a-duplicate")
+        if content_id is not None and str(value.get("content_id") or "") != str(content_id):
+            raise RuntimeError("archived-item-content-id-mismatch")
+        if not str(value.get("duplicate_of_content_id") or "").strip():
+            raise RuntimeError("archived-duplicate-owner-missing")
+        return value
 
     def update_original_url(self, item_id: str, original_url: str) -> str | None:
         """Enrich the same message reservation without reopening a duplicate URL.

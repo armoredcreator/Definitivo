@@ -181,3 +181,20 @@ Continuam pendentes: aprovar um novo item Vision com oferta afiliada válida; am
 | CI remoto do commit `7563493` | **Aprovado.** Workflow `Definitivo CI` no Windows: execução 40200127503 concluída com sucesso. A instalação local foi comparada com `origin/main` pelo verificador de integridade. |
 
 Evidência estruturada: `storage/validation/completion-certification-2026-10-25.json` (local, ignorada pelo Git). A sincronização histórica e o ensaio prolongado são requisitos remanescentes; a Fase 15 não está certificada como concluída.
+
+
+### Atualização de certificação — 25/10/2026
+
+| Verificação | Resultado observado |
+| --- | --- |
+| Varredura histórica Sync | Concluída sem erros (`varredura=OK`): 6.645 candidatos examinados nas três fontes — F1 `-1003788989075`: 0 novos, F2 `-1002698134896`: 3.373, F3 `-1002039708059`: 3.272. Sync registrou itens e duplicados sem baixar mídia. O banco passou de 14.501 para 21.087 itens ativos. |
+| Duplicados anteriormente arquivados | A auditoria detectou que 5.480 IDs compactados haviam sido reabertos pelo Sync; 4.255 estavam indevidamente `RECEIVED`. O backup `storage/backups/armoredcreator-before-archived-sync-repair-20261025T143630Z.sqlite3` foi criado e validado antes da reparação. A migração `20261025_004_fence_reingested_archived_duplicates` colocou os 5.480 em `DUPLICATE`, preservou intactos os 5.480 snapshots arquivados e gravou auditoria/eventos. A nova proteção em `Database.reserve_item` verifica hash, identidade e proprietário arquivado e impede reabrir esse trabalho. |
+| Banco após reparação | 21.087 itens ativos: 5.991 `DUPLICATE`, 20 `PUBLISHED`, 8.898 `RECEIVED`, 8 `RECOVERY`, 6.170 `WAITING_VISION`. Todos os sete bancos passaram `quick_check=ok` e `foreign_key_check` vazio. Os 5.480 itens ainda presentes no arquivo aparecem ativos somente como `DUPLICATE`; nenhum foi enviado ao Vision/Stock pela varredura. |
+| START_ALL após reparação | Preflight de runtime, composição, SQLite, credenciais e três rotas contratuais aprovados. |
+| Suíte local após a correção | 779 aprovados, 4 ignorados, 0 falhas. Os ignorados permanecem as duas barreiras do Windows, `safe_globals` indisponível e E2E Telegram que exige configuração do runner. |
+| CI remoto | O commit `e989921` passou no Windows com 779 aprovados, 2 ignorados, 0 falhas. A correção recém-feita para duplicados arquivados ainda precisa ser commitada e confirmada no CI. |
+| Corte para LIVE e processamento do backlog | **Pendente.** As três flags `historical_complete` continuam em zero porque Sync foi executado como etapa de descoberta isolada. Ainda há itens `RECEIVED` para Vision, `RECOVERY` para reconciliação e limites persistentes de consultas Shopee. O fluxo não deve iniciar Vision em massa nem mudar para LIVE até completar as etapas seguintes e seus orçamentos autorizados. |
+| Recibo histórico não confirmado | O item `-1003788989075_1040`, recibo Telegram 1339/tópico 228, foi consultado ao vivo por ID e o Hub retornou `ABSENT`. O registro tem campos históricos inconsistentes (`confirmed=1`, `SENT_UNVERIFIED`) e permanece em `RECOVERY`; o recibo e a quarentena foram preservados, sem novo envio. |
+| Operação prolongada / outro PC | Ainda pendentes: ensaio contínuo controlado de descoberta/produção e validação física em uma segunda máquina Windows. A instalação isolada no mesmo notebook passou bootstrap, `START_ALL.bat` e 779 testes. |
+
+A evidência estruturada local foi atualizada em `storage/validation/completion-certification-2026-10-25.json`. A varredura Sync histórica agora está comprovada; a Fase 15 continua aberta até Vision/produção do backlog dentro dos limites, resolução segura dos recibos em `RECOVERY`, teste prolongado, portabilidade em outra máquina e CI da correção mais recente.

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime, timezone
+import hashlib
+import json
 import sqlite3
 from pathlib import Path
 
@@ -10,6 +12,7 @@ from pathlib import Path
 STOCK_REQUEUE_MIGRATION = "20261024_001_requeue_approved_to_stock"
 PUBLICATION_STATE_REPAIR_MIGRATION = "20261024_002_restore_publication_fences"
 MISSING_RECEIPT_FENCE_MIGRATION = "20261024_003_fence_missing_legacy_receipts"
+ARCHIVED_DUPLICATE_RESERVATION_MIGRATION = "20261025_004_fence_reingested_archived_duplicates"
 POST_STOCK_STATES = (
     "IA", "SPEECH", "STUDIO_BATCH", "STUDIO", "STUDIO_COMPLETE",
     "RECOVERY", "FAILED",
@@ -45,6 +48,146 @@ def sqlite_backup(source: Path, destination: Path) -> dict:
     finally:
         src.close()
         dst.close()
+
+
+def fence_reingested_archived_duplicates(
+    database: Path, *, project_root: Path, backup_path: Path
+) -> dict:
+    """Restore compacted duplicate reservations to non-processable DUPLICATE state.
+
+    Existing archive snapshots remain untouched. The operation only corrects
+    active stubs recreated by an earlier Sync scan and refuses any row with a
+    publication receipt or unexpected active state.
+    """
+    database = Path(database).resolve(strict=True)
+    root = Path(project_root).resolve(strict=True)
+    try:
+        database.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("migration target must be inside the new project root") from exc
+    if "armoredcreator-final" in str(database).casefold():
+        raise ValueError("refusing to modify the preserved historical installation")
+
+    connection = sqlite3.connect(database, timeout=30, isolation_level=None)
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute("PRAGMA busy_timeout=30000")
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute("""CREATE TABLE IF NOT EXISTS migration_audit (
+            migration_id TEXT PRIMARY KEY,
+            applied_at_utc TEXT NOT NULL,
+            affected_items INTEGER NOT NULL,
+            prior_states_json TEXT NOT NULL,
+            backup_file TEXT NOT NULL
+        )""")
+        prior = connection.execute(
+            "SELECT * FROM migration_audit WHERE migration_id=?",
+            (ARCHIVED_DUPLICATE_RESERVATION_MIGRATION,),
+        ).fetchone()
+        if prior:
+            return {
+                "migration_id": ARCHIVED_DUPLICATE_RESERVATION_MIGRATION,
+                "applied": False,
+                "affected_items": int(prior["affected_items"]),
+                "reason": "already-applied",
+            }
+
+        tables = {str(row[0]) for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )}
+        if not {"items", "reconciliation_archived_items", "state_events", "publications"}.issubset(tables):
+            raise sqlite3.DatabaseError("archive repair requires items, archive, events, and publications")
+
+        backup = sqlite_backup(database, backup_path)
+        connection.execute("BEGIN IMMEDIATE")
+        counts: Counter[str] = Counter()
+        rows = connection.execute(
+            "SELECT a.content_id,a.item_json,a.item_sha256,i.state AS active_state,"
+            "i.source_id AS active_source,i.telegram_message_id AS active_message "
+            "FROM reconciliation_archived_items a JOIN items i USING(content_id) "
+            "ORDER BY a.content_id"
+        ).fetchall()
+        for row in rows:
+            item_id = str(row["content_id"])
+            payload = str(row["item_json"])
+            if hashlib.sha256(payload.encode("utf-8")).hexdigest() != str(row["item_sha256"]):
+                raise sqlite3.DatabaseError(f"archived payload hash mismatch: {item_id}")
+            archived = json.loads(payload)
+            if (
+                not isinstance(archived, dict)
+                or str(archived.get("content_id") or "") != item_id
+                or str(archived.get("state") or "") != "DUPLICATE"
+            ):
+                raise sqlite3.DatabaseError(f"invalid archived duplicate snapshot: {item_id}")
+            owner = str(archived.get("duplicate_of_content_id") or "").strip()
+            if not owner or owner == item_id:
+                raise sqlite3.DatabaseError(f"invalid archived duplicate owner: {item_id}")
+            if (
+                str(archived.get("source_id") or "") != str(row["active_source"] or "")
+                or str(archived.get("telegram_message_id") or "") != str(row["active_message"] or "")
+            ):
+                raise sqlite3.DatabaseError(f"active/archive identity mismatch: {item_id}")
+            if row["active_state"] not in {"RECEIVED", "DUPLICATE"}:
+                raise sqlite3.DatabaseError(
+                    f"refusing to rewrite advanced active state {row['active_state']}: {item_id}"
+                )
+            publication = connection.execute(
+                "SELECT 1 FROM publications WHERE content_id=?", (item_id,)
+            ).fetchone()
+            if publication is not None:
+                raise sqlite3.DatabaseError(f"archived duplicate has publication receipt: {item_id}")
+            if connection.execute("SELECT 1 FROM items WHERE content_id=?", (owner,)).fetchone() is None:
+                raise sqlite3.DatabaseError(f"archived duplicate owner is missing: {item_id}:{owner}")
+
+            prior_state = str(row["active_state"])
+            reason = f"{ARCHIVED_DUPLICATE_RESERVATION_MIGRATION}:{owner}"
+            connection.execute(
+                "UPDATE items SET state='DUPLICATE',duplicate_of_content_id=?,last_error=?,"
+                "updated_at=CURRENT_TIMESTAMP WHERE content_id=?",
+                (owner, reason, item_id),
+            )
+            if prior_state != "DUPLICATE":
+                connection.execute(
+                    "INSERT INTO state_events(content_id,old_state,new_state,reason) "
+                    "VALUES(?,?,?,?)",
+                    (item_id, prior_state, "DUPLICATE", reason),
+                )
+            elif str(archived.get("duplicate_of_content_id") or "") != owner:
+                raise sqlite3.DatabaseError(f"active duplicate owner mismatch: {item_id}")
+            counts[prior_state] += 1
+
+        connection.execute(
+            "INSERT INTO migration_audit(migration_id,applied_at_utc,affected_items,prior_states_json,backup_file) "
+            "VALUES(?,?,?,?,?)",
+            (
+                ARCHIVED_DUPLICATE_RESERVATION_MIGRATION,
+                datetime.now(timezone.utc).isoformat(),
+                sum(counts.values()),
+                json.dumps(dict(counts), sort_keys=True),
+                str(backup_path),
+            ),
+        )
+        connection.commit()
+        quick = [str(row[0]) for row in connection.execute("PRAGMA quick_check")]
+        foreign_keys = connection.execute("PRAGMA foreign_key_check").fetchall()
+        if quick != ["ok"] or foreign_keys:
+            raise sqlite3.DatabaseError("archived-duplicate repair failed integrity validation")
+        return {
+            "migration_id": ARCHIVED_DUPLICATE_RESERVATION_MIGRATION,
+            "applied": True,
+            "affected_items": sum(counts.values()),
+            "prior_states": dict(counts),
+            "resulting_state": "DUPLICATE",
+            "backup": backup,
+            "quick_check": quick[0],
+            "foreign_key_violations": 0,
+        }
+    except BaseException:
+        if connection.in_transaction:
+            connection.rollback()
+        raise
+    finally:
+        connection.close()
 
 
 def requeue_vision_approved_to_stock(
