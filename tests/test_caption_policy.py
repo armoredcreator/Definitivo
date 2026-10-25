@@ -139,6 +139,52 @@ def test_policy_rejects_unlinked_product_nouns():
         )
 
 
+def test_policy_rejects_unidiomatic_bag_for_computer_caption():
+    context = {
+        "productName": "Senhoras almoço bolsa computador portátil saco com compartimento almoço",
+    }
+    with pytest.raises(CaptionPolicyError, match="relação pouco natural"):
+        validate_caption(
+            "🧡 Bolsa de computador\n#bolsa #computador",
+            product_name=context["productName"],
+            product_context=context,
+        )
+    assert _normalize_validate(
+        "Bolsa para computador\n#bolsa #computador",
+        product_name=context["productName"],
+        product_context=context,
+    ) == "🧡 Bolsa para computador\n#bolsa #computador"
+
+
+def test_caption_generator_retries_unnatural_preposition_with_specific_guidance(monkeypatch):
+    monkeypatch.setenv("ARMORED_IA_CAPTION_ENABLED", "1")
+    monkeypatch.setenv("ARMORED_IA_POLICY_RETRIES", "1")
+
+    class Provider:
+        def __init__(self):
+            self.calls = 0
+            self.retry_context = None
+
+        def generate_candidates(self, task, context, limit):
+            self.calls += 1
+            if self.calls == 1:
+                return ["Bolsa de computador\n#bolsa #computador"]
+            self.retry_context = context
+            return ["Bolsa para computador\n#bolsa #computador"]
+
+    provider = Provider()
+    caption = CaptionGenerator(provider=provider).generate({
+        "productName": "Senhoras almoço bolsa computador portátil saco com compartimento almoço",
+    })
+
+    assert caption == "🧡 Bolsa para computador\n#bolsa #computador"
+    assert provider.calls == 2
+    assert any(
+        "bolsa para computador" in value.casefold()
+        for value in provider.retry_context["__policy_retry_feedback"]
+    )
+
+
 def test_policy_rejects_clear_gender_and_number_disagreement():
     context = {"productName": "Bolsa feminina tiracolo", "categoryName": "bolsas e acessórios"}
     with pytest.raises(CaptionPolicyError, match="concordância"):

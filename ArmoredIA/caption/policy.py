@@ -423,6 +423,20 @@ def _has_unlinked_product_nouns(words: list[str]) -> bool:
     return False
 
 
+def _has_unnatural_bag_device_relation(words: list[str]) -> bool:
+    """Reject a literal ``bag de computer`` construction in Brazilian Portuguese."""
+    folded = [_fold(word) for word in words]
+    bags = {"bolsa", "bolsas", "mochila", "mochilas", "pasta", "pastas"}
+    devices = {"computador", "computadores", "notebook", "notebooks", "laptop", "laptops", "tablet", "tablets"}
+    return any(
+        folded[index] in bags
+        and index + 2 < len(folded)
+        and folded[index + 1] == "de"
+        and folded[index + 2] in devices
+        for index in range(len(folded))
+    )
+
+
 def _normalize_known_agreement(text: str) -> tuple[str, bool]:
     """Safely inflect a known reaction adjective to match its product noun."""
     matches = list(WORD_RE.finditer(text))
@@ -711,6 +725,10 @@ def validate_caption(
         )
     if _has_unlinked_product_nouns(words):
         raise CaptionPolicyError("texto principal combina substantivos de produto sem ligação natural")
+    if _has_unnatural_bag_device_relation(words):
+        raise CaptionPolicyError(
+            "relação pouco natural: bolsa para computador descreve finalidade; não use bolsa de computador"
+        )
     if _has_known_agreement_error(words):
         raise CaptionPolicyError("texto principal contém erro de concordância de gênero ou número")
 

@@ -110,6 +110,7 @@ PARA CADA OPÇÃO:
 - NÃO use linguagem de venda, urgência, promoção ou desconto.
 - NÃO escreva marca, modelo, quantidade, medida, pH, voltagem ou especificação técnica.
 - Preserve o substantivo principal. Uma frase curta que nomeie diretamente a categoria do produto é válida; não reproduza o título inteiro.
+- Use preposições que expressem a relação correta em português do Brasil: para finalidade ou transporte ("bolsa para computador"), de para composição/posse quando fizer sentido. Nunca forme "bolsa de computador".
 - Se o título trouxer dois substantivos que descrevem o mesmo produto, conecte-os apenas de forma natural e apoiada pelo título, por exemplo "Descascador tipo apontador" para "Descascador de Legumes Apontador". Não substitua esses termos por forma, material ou benefício inventado.
 - Não use hashtags para contornar as regras.
 - Uma palavra genérica da categoria é permitida.

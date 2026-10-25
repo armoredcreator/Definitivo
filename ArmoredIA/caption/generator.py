@@ -186,6 +186,11 @@ class CaptionGenerator:
             guidance.append(
                 "Faça o adjetivo concordar em gênero e número com o substantivo do produto."
             )
+        if "relação pouco natural" in text:
+            guidance.append(
+                "Reescreva como português brasileiro natural. Para bolsa destinada a computador, "
+                "use 'para computador'; 'bolsa de computador' soa como se o computador fosse o material."
+            )
         if "coração" in text or "emoji" in text:
             guidance.append("Não produza emoji; o sistema centraliza o coração laranja na normalização.")
         if "hashtag" in text:
