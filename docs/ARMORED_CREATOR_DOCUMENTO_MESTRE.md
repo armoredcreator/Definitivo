@@ -103,7 +103,7 @@ Valide no `.venv` novo:
 7. `python scripts/verify_installation.py` confirma branch, commit, árvore limpa e igualdade com `origin/main`; gera hashes SHA-256 dos arquivos versionados em `storage/validation/source-integrity.json` e recusa arquivos privados.
 8. Revisão de `git status` e arquivos ignorados para garantir que não haja credenciais, sessões, bancos, mídia ou modelos no Git.
 
-Na validação local Windows, quatro testes podem ser ignorados por barreiras explícitas do ambiente: o E2E que exige autorização `ARMORED_REAL_TELEGRAM_E2E=1`; dois testes de links simbólicos que exigem privilégio do Windows; e a verificação de `safe_globals` quando a API pública não existe na versão de PyTorch instalada. Esses skips não afirmam validação de publicação real; esse E2E permanece bloqueado até autorização específica.
+Na validação local Windows, quatro testes podem ser ignorados por barreiras explícitas do ambiente: o E2E configurável que pode fazer uma publicação real, dois testes de links simbólicos que exigem privilégio do Windows, e a verificação de `safe_globals` quando a API pública não existe na versão de PyTorch instalada. Esses skips não afirmam validação de publicação real; envios reais de certificação dependem de autorização explícita.
 
 O projeto só deve ser declarado pronto quando a validação integrada e a instalação reproduzível forem aprovadas. Evidências transitórias de validação ficam em `storage/validation/` e não são versionadas. Este documento é a única documentação técnica do repositório; o README raiz é somente uma apresentação curta. Relatórios antigos do laboratório de áudio foram consolidados como evidência histórica abaixo e não são validação da versão Definitivo.
 
@@ -138,3 +138,22 @@ A implementação de referência no ArmoredAudioLab registrou um corpus real de 
 ## Estrutura operacional
 
 `runtime/telegram-bot-api/` contém apenas o executável nativo e DLLs locais; `runtime/models/` contém modelos ignorados pelo Git; `runtime/packages/` contém somente as wheels/fontes necessárias ao bootstrap; `storage/database/`, `videos/`, `logs/`, `backups/` e `validation/` separam os dados de execução e evidências. `credentials/` concentra tokens, chaves e sessões. O cache do pytest fica em `storage/validation/.pytest_cache/`. Não há `.env` de produção na raiz, clone auxiliar ou arquivo de teste no diretório raiz.
+
+## Certificação operacional — 25/10/2026
+
+Este retrato registra evidências da instalação local, sem declarar a Fase 15 concluída.
+
+| Verificação | Resultado observado |
+| --- | --- |
+| `START_ALL.bat` sem argumentos | Preflight de runtime, montagem dos sete módulos, integridade SQLite e configuração das três fontes/rotas aprovados. |
+| Dependências | `pip check` sem conflitos. |
+| Suíte local | 759 aprovados, 4 ignorados, 0 falhas. Os ignorados são o E2E configurável de publicação, dois testes que exigem privilégios para links simbólicos e o teste de `safe_globals` indisponível nesta versão do PyTorch. |
+| Banco principal | `PRAGMA quick_check = ok`; `foreign_key_check` sem violações. |
+| Publicações por rota | Recibos confirmados: tópico 1327 / mensagem 1359; tópico 228 / mensagem 1360; tópico 1160 / mensagem 1361; todos no chat `-1004341972306`. |
+| Produção real pelo `START_ALL` | Item `-1003788989075_298` percorreu recuperação de Speech/RVC, Studio e Hub pelo launcher; MP4 H.264/AAC 1080×1920 validado pelo FFprobe e publicação confirmada no tópico 228. A legenda já estava persistida antes desta execução. |
+| Produção real com Ollama/Gemma | Item `-1002698134896_30` percorreu Policy, Speech/RVC Melody, Studio, FFprobe e Hub usando Gemma; MP4 H.264/AAC 1080×1920 validado e publicação confirmada no tópico 1160. Este ensaio foi iniciado pelo Coordinator diretamente, não por `START_ALL`. |
+| Descoberta Telegram | As três fontes foram consultadas. Um item novo sem link comercial, `-1002039708059_12043`, foi registrado como `WAITING_VISION`; o original não foi baixado. Amostras posteriores encontraram candidatos com link nas fontes 2 e 3. |
+
+As evidências estruturadas e os hashes dos dois MP4s ficam no arquivo ignorado `storage/validation/operational-certification-2026-10-25.json`. O banco indica que a sincronização histórica ainda não chegou ao fim nas três fontes. Não foi feita nova consulta comercial: não havia ledger de quota persistente Shopee válido. Por isso, a aprovação Vision de um novo item Shopee continua sem certificação nesta instalação.
+
+Continuam pendentes: executar o fluxo Gemma completo pelo próprio `START_ALL.bat`; concluir uma consulta Vision real sob orçamento persistente autorizado; ensaiar interrupção/retomada deliberada em todas as etapas críticas; medir uma operação prolongada no notebook-alvo; instalar e iniciar em ambiente limpo; concluir reconciliação do histórico; e regenerar `source-integrity.json` após sincronizar uma árvore limpa com o commit publicado. A recuperação de Speech/RVC foi observada em uma execução real e há cobertura automatizada para outros cenários, mas isso não substitui a matriz operacional de interrupções.

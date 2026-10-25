@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 import contextlib
+import hashlib
+import shutil
 import threading
 import io
 import os
@@ -22,6 +24,46 @@ MODELS_DIR = RVC_ROOT / "models"
 BASE_DIR = SPEECH_ROOT
 
 _SAFE_GLOBALS_LOCK = threading.RLock()
+
+
+def _ensure_rvc_base_assets(package_dir: Path) -> None:
+    """Expose centralized runtime RVC assets to rvc-python without downloads."""
+    project_root = Path(os.getenv("ARMORED_ROOT") or REPO_ROOT).expanduser().resolve()
+    source_dir = project_root / "runtime" / "models" / "rvc" / "base_model"
+    destination_dir = package_dir / "base_model"
+    required = ("hubert_base.pt", "rmvpe.pt", "rmvpe.onnx")
+
+    def digest(path: Path) -> str:
+        hasher = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                hasher.update(chunk)
+        return hasher.hexdigest()
+
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    for name in required:
+        source = source_dir / name
+        destination = destination_dir / name
+        if not source.is_file() or source.stat().st_size <= 0:
+            raise FileNotFoundError(
+                f"RVC base asset missing from centralized runtime: {source}"
+            )
+        source_hash = digest(source)
+        if destination.is_file():
+            if digest(destination) != source_hash:
+                raise RuntimeError(f"RVC package asset conflicts with runtime model: {name}")
+            continue
+        temporary = destination.with_suffix(destination.suffix + ".part")
+        if temporary.exists():
+            raise FileExistsError(f"RVC base asset partial already exists: {temporary}")
+        try:
+            os.link(source, temporary)
+        except OSError:
+            shutil.copyfile(source, temporary)
+        if digest(temporary) != source_hash:
+            temporary.unlink(missing_ok=True)
+            raise RuntimeError(f"RVC base asset integrity check failed: {name}")
+        temporary.replace(destination)
 
 
 def _trusted_safe_globals(torch_module, globals_to_allow):
@@ -137,6 +179,7 @@ def converter_interno(entrada, saida, modelo, index, item_id=None):
     try:
         with contextlib.redirect_stdout(captured_stdout), contextlib.redirect_stderr(captured_stderr):
             from rvc_python.infer import RVCInference
+            _ensure_rvc_base_assets(Path(sys.modules[RVCInference.__module__].__file__).parent)
             rvc = RVCInference(
                 model_path=str(modelo),
                 index_path=str(index) if index else "",

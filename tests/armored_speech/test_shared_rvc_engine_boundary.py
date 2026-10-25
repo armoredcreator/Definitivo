@@ -51,3 +51,22 @@ def test_shared_runtime_declares_exact_python_patch_before_installation():
     assert not (repo_root / "ArmoredSpeech" / "setup_runtime.ps1").exists()
     assert not (repo_root / "ArmoredSpeech" / "requirements-analysis.txt").exists()
     assert not (repo_root / "ArmoredSpeech" / "requirements-separation.txt").exists()
+
+
+def test_rvc_base_assets_are_linked_from_central_runtime(monkeypatch, tmp_path):
+    monkeypatch.setenv("ARMORED_ROOT", str(tmp_path))
+    central = tmp_path / "runtime" / "models" / "rvc" / "base_model"
+    central.mkdir(parents=True)
+    expected = {}
+    for name in ("hubert_base.pt", "rmvpe.pt", "rmvpe.onnx"):
+        payload = (name + "-fixture").encode()
+        (central / name).write_bytes(payload)
+        expected[name] = payload
+
+    package = tmp_path / ".venv" / "Lib" / "site-packages" / "rvc_python"
+    rvc_engine._ensure_rvc_base_assets(package)
+
+    assert {
+        name: (package / "base_model" / name).read_bytes()
+        for name in expected
+    } == expected

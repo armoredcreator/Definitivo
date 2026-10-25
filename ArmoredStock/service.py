@@ -102,42 +102,62 @@ class ArmoredStock:
             except ValueError:
                 configured_legacy = (os.getenv("ARMORED_LEGACY_MEDIA_ROOT") or "").strip()
                 if not configured_legacy:
-                    raise RuntimeError(
-                        f"refusing-to-repair-original-outside-storage-root:{item.content_id}:{old_path}"
-                    )
-                legacy_root = Path(configured_legacy).expanduser().resolve(strict=True)
-                try:
-                    old_path.relative_to(legacy_root)
-                except ValueError as exc:
-                    raise RuntimeError(
-                        f"refusing-to-repair-original-outside-trusted-legacy-root:{item.content_id}:{old_path}"
-                    ) from exc
-                if old_path.is_file():
-                    digest = self._sha256(old_path)
-                    expected = str(getattr(item, "original_sha256", "") or "").strip().lower()
-                    if expected and digest.lower() != expected:
-                        raise RuntimeError(f"original-immutable-hash-mismatch:{item.content_id}")
-                    canonical_original.parent.mkdir(parents=True, exist_ok=True)
-                    partial = canonical_original.with_suffix(canonical_original.suffix + ".part")
-                    if partial.exists():
-                        raise FileExistsError(f"stock-partial-already-exists:{partial}")
-                    before = old_path.stat()
-                    shutil.copyfile(old_path, partial)
-                    after = old_path.stat()
-                    if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
-                        partial.unlink(missing_ok=True)
-                        raise RuntimeError(f"legacy-original-changed-during-copy:{item.content_id}")
-                    if self._sha256(partial) != digest:
-                        partial.unlink(missing_ok=True)
-                        raise RuntimeError(f"legacy-original-copy-hash-mismatch:{item.content_id}")
-                    partial.replace(canonical_original)
+                    if old_path.is_file():
+                        raise RuntimeError(
+                            f"refusing-to-repair-original-outside-storage-root:{item.content_id}:{old_path}"
+                        )
+                    # A clean installation may retain an absolute path from a
+                    # machine that no longer exists. Once an approved item is
+                    # selected, repair the reservation and reacquire it from
+                    # Telegram instead of treating a dead legacy path as a
+                    # trusted media dependency.
                     coordinator.db.repair_original_path(item.content_id, canonical_original)
                     item = coordinator.db.get(item.content_id)
                 else:
-                    # Missing historical media can be re-fetched from Telegram
-                    # only after this approved item has been selected for Stock.
-                    coordinator.db.repair_original_path(item.content_id, canonical_original)
-                    item = coordinator.db.get(item.content_id)
+                    legacy_root_path = Path(configured_legacy).expanduser()
+                    try:
+                        legacy_root = legacy_root_path.resolve(strict=True)
+                    except FileNotFoundError as exc:
+                        if old_path.is_file():
+                            raise RuntimeError(
+                                f"trusted-legacy-root-unavailable:{item.content_id}:{legacy_root_path}"
+                            ) from exc
+                        coordinator.db.repair_original_path(item.content_id, canonical_original)
+                        item = coordinator.db.get(item.content_id)
+                        legacy_root = None
+                    if legacy_root is not None:
+                        try:
+                            old_path.relative_to(legacy_root)
+                        except ValueError as exc:
+                            raise RuntimeError(
+                                f"refusing-to-repair-original-outside-trusted-legacy-root:{item.content_id}:{old_path}"
+                            ) from exc
+                    if legacy_root is not None and old_path.is_file():
+                        digest = self._sha256(old_path)
+                        expected = str(getattr(item, "original_sha256", "") or "").strip().lower()
+                        if expected and digest.lower() != expected:
+                            raise RuntimeError(f"original-immutable-hash-mismatch:{item.content_id}")
+                        canonical_original.parent.mkdir(parents=True, exist_ok=True)
+                        partial = canonical_original.with_suffix(canonical_original.suffix + ".part")
+                        if partial.exists():
+                            raise FileExistsError(f"stock-partial-already-exists:{partial}")
+                        before = old_path.stat()
+                        shutil.copyfile(old_path, partial)
+                        after = old_path.stat()
+                        if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+                            partial.unlink(missing_ok=True)
+                            raise RuntimeError(f"legacy-original-changed-during-copy:{item.content_id}")
+                        if self._sha256(partial) != digest:
+                            partial.unlink(missing_ok=True)
+                            raise RuntimeError(f"legacy-original-copy-hash-mismatch:{item.content_id}")
+                        partial.replace(canonical_original)
+                        coordinator.db.repair_original_path(item.content_id, canonical_original)
+                        item = coordinator.db.get(item.content_id)
+                    elif legacy_root is not None:
+                        # Missing historical media can be re-fetched from Telegram
+                        # only after this approved item has been selected for Stock.
+                        coordinator.db.repair_original_path(item.content_id, canonical_original)
+                        item = coordinator.db.get(item.content_id)
             if old_path.is_file():
                 if old_path.is_relative_to(storage_root):
                     old_digest = self._sha256(old_path)

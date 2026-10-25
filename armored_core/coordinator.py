@@ -46,6 +46,7 @@ class Coordinator:
         self._last_catch_up_completed_count = 0
         self.catch_up_budget = catch_up_budget
         self.continuous_budget = continuous_budget
+        self._last_catch_up_error: str | None = None
         self.startup_reconciler.publication_quarantine = self.publication_quarantine
         self._shutdown_requested = False
         self.pipeline.set_shutdown_checker(lambda: self._shutdown_requested)
@@ -133,12 +134,23 @@ class Coordinator:
         storage_root: Path | None = None,
     ):
         storage = Storage(root, storage_root=storage_root)
+        # A custom --root must also govern modules that resolve runtime assets
+        # through ARMORED_ROOT; never let the caller's working directory pick
+        # model caches or derived files for this Coordinator.
+        os.environ["ARMORED_ROOT"] = str(storage.root.resolve())
         # Project-local credential source of truth.
         # Secrets live only in credentials/project.env; runtime modules continue
         # consuming them through os.getenv() and do not know the file location.
         project_credentials = storage.root / "credentials" / "project.env"
         if project_credentials.exists():
             load_dotenv(project_credentials, override=True)
+        legacy_media_root = (os.getenv("ARMORED_LEGACY_MEDIA_ROOT") or "").strip()
+        if legacy_media_root:
+            legacy_path = Path(legacy_media_root).expanduser()
+            if not legacy_path.is_absolute():
+                os.environ["ARMORED_LEGACY_MEDIA_ROOT"] = str(
+                    (storage.root / legacy_path).resolve()
+                )
 
         # The command-line production lifetime defaults to a closed Hub gate.
         # Existing programmatic callers retain their environment-controlled
@@ -654,6 +666,7 @@ class Coordinator:
         continue lightweight LIVE discovery and Vision work.
         """
         source = self.source
+        self._last_catch_up_error = None
         processed: list[str] = []
         checkpoint_blocked = False
         allowed_ids = self._prepare_catch_up_budget()
@@ -1218,7 +1231,13 @@ class Coordinator:
                 else:
                     self.run(item.content_id)
                 current = self.db.get(item.content_id)
-                if current.state == State.RECOVERY or (
+                hub_deferred_with_valid_render = (
+                    current.state == State.PUBLISHING
+                    and self.db.has_speech_studio_v5_completion(item.content_id)
+                    and current.result_path is not None
+                    and current.result_path.is_file()
+                )
+                if not hub_deferred_with_valid_render and (current.state == State.RECOVERY or (
                     current.state != State.WAITING_VISION
                     and (
                         current.state != State.PUBLISHED
@@ -1228,7 +1247,7 @@ class Coordinator:
                         )
                         or not current.cleanup_completed
                     )
-                ):
+                )):
                     checkpoint_blocked = True
                     self.log.error(
                         "[COORDINATOR][CATCH-UP][PRODUCTION] item=%s did not "
@@ -1270,6 +1289,10 @@ class Coordinator:
             checkpoint_blocked
             or bool(getattr(source, "historical_materialization_failed", False))
         )
+        if failed:
+            self._last_catch_up_error = (
+                "CATCH-UP bloqueado por falha operacional; consulte o log do item e retome após corrigir a causa"
+            )
         scan_complete = bool(getattr(source, "historical_scan_exhausted", False))
         quarantine_blocks_cutover = self._quarantine_blocks_historical_cursor()
         if scan_complete and not failed and not quarantine_blocks_cutover:
@@ -1822,6 +1845,8 @@ class Coordinator:
                 self.catch_up_budget.assigned_count,
             )
             await self._run_catch_up_with_recovery_async()
+            if self._last_catch_up_error:
+                raise RuntimeError(self._last_catch_up_error)
             return
 
         source_complete = (

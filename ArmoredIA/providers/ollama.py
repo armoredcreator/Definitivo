@@ -197,7 +197,18 @@ Retorne SOMENTE um objeto JSON válido com a chave "captions". Cada item é um o
         hashtag_pattern = "^#[A-Za-zÀ-ÿ0-9_]+$"
         if grounded_text_words:
             allowed_words = self._schema_word_variants(grounded_text_words)
-            text_pattern = rf"^(?:{allowed_words})(?: (?:{allowed_words})){{1,2}}[.!?]?$"
+            if product_anchors:
+                # The shared Policy requires the product category/head noun in
+                # sparse Vision records. Put that invariant into the local
+                # model's constrained-output schema as well: asking a small
+                # CPU model to remember an anchor from a noisy marketplace
+                # title is not reliable enough on its own.
+                required_anchors = self._schema_word_variants(product_anchors)
+                text_pattern = (
+                    rf"^(?:{required_anchors})(?: (?:{allowed_words})){{1,2}}[.!?]?$"
+                )
+            else:
+                text_pattern = rf"^(?:{allowed_words})(?: (?:{allowed_words})){{1,2}}[.!?]?$"
         if grounded_hashtags:
             allowed_tags = self._schema_word_variants(grounded_hashtags)
             hashtag_pattern = rf"^#(?:{allowed_tags})$"

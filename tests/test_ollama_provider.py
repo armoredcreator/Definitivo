@@ -167,6 +167,31 @@ def test_ollama_policy_feedback_excludes_rejected_title_phrase_on_retry(monkeypa
     assert "fina" not in text_pattern.casefold()
 
 
+def test_ollama_schema_requires_product_head_first_for_noisy_sparse_titles(monkeypatch):
+    import json as json_module
+    import re
+
+    calls = []
+
+    def requester(_url, *, json, timeout):
+        calls.append(json)
+        return _Response({"response": json_module.dumps({"captions": [
+            {"text": "Bolsa bonita", "hashtags": ["#bolsa"]}
+        ]})})
+
+    provider = OllamaProvider(requester=requester)
+    provider.generate_candidates("caption", {
+        "productName": "Senhoras almoço bolsa computador portátil saco com compartimento almoço",
+        "itemId": 27478503595,
+        "shopId": 1415257023,
+    }, 1)
+
+    text_pattern = calls[0]["format"]["properties"]["captions"]["items"]["properties"]["text"]["pattern"]
+    assert re.fullmatch(text_pattern, "Bolsa bonita")
+    assert not re.fullmatch(text_pattern, "Acolchoado elegante para")
+    assert "Termo(s) de identidade obrigatórios" in calls[0]["prompt"]
+
+
 def test_structured_model_fields_keep_hashtags_without_inventing_content():
     result = OllamaProvider._extract_candidates({"response": json.dumps({"captions": [
         {"text": "Cantinho sereno", "hashtags": ["#decor", "#casa"]}

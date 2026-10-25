@@ -71,7 +71,7 @@ def test_stock_refuses_untrusted_external_original_even_when_file_exists(tmp_pat
     assert db.repaired_paths == []
 
 
-def test_stock_refuses_untrusted_external_missing_original_path(tmp_path, monkeypatch):
+def test_stock_reacquires_missing_legacy_original_only_after_approval(tmp_path, monkeypatch):
     lab_root = tmp_path / "AudioLab"
     production_root = tmp_path / "ArmoredCreator-final"
     production_root.mkdir(parents=True)
@@ -94,13 +94,41 @@ def test_stock_refuses_untrusted_external_missing_original_path(tmp_path, monkey
         original_sha256="",
     )
     db = FakeDatabase(item)
-    coordinator = SimpleNamespace(storage=storage, db=db, source=None)
+    class Source:
+        source_id = "source1"
 
-    with pytest.raises(RuntimeError, match="refusing-to-repair-original-outside-storage-root"):
-        asyncio.run(ArmoredStock(coordinator).materialize_item(item))
+        async def materialize_candidate_async(self, message_id, target):
+            assert message_id == "124"
+            Path(target).parent.mkdir(parents=True, exist_ok=True)
+            Path(target).write_bytes(b"restored-from-telegram")
 
+    async def materialize_message(message):
+        target = storage.original(
+            item.content_id,
+            ".mp4",
+            original_url=item.original_url,
+            source_id=item.source_id,
+        ).resolve()
+        await message.materialize(target)
+        item.original_path = target
+
+    coordinator = SimpleNamespace(
+        storage=storage,
+        db=db,
+        source=Source(),
+        sync=SimpleNamespace(materialize_message_async=materialize_message),
+    )
+
+    outcome = asyncio.run(
+        ArmoredStock(coordinator).materialize_item(item, connection_already_managed=True)
+    )
+
+    assert outcome == "downloaded"
     assert not missing_external.exists()
-    assert db.repaired_paths == []
+    assert db.repaired_paths == [storage.original(
+        item.content_id, ".mp4", original_url=item.original_url, source_id=item.source_id
+    ).resolve()]
+    assert item.original_path.is_file()
 
 
 def test_stock_copies_trusted_legacy_original_and_preserves_source(tmp_path, monkeypatch):

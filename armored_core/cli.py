@@ -83,6 +83,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.evidence is not None and not args.preflight:
         parser.error("--evidence só pode ser usado com --preflight")
     _load_project_configuration(root)
+    os.environ["ARMORED_ROOT"] = str(root)
     try:
         routes = load_routes()
         _validate_routes(routes)
@@ -109,6 +110,11 @@ def main(argv: list[str] | None = None) -> int:
             level=(os.getenv("ARMORED_LOG_LEVEL") or "INFO").upper(),
             format="%(asctime)s %(levelname)s %(name)s %(message)s",
         )
+        # httpx formats Telegram Bot API URLs with the bot token embedded in
+        # the path. Keep request-level transport logs out of the operational
+        # console so credentials never leak through otherwise successful sends.
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("httpcore").setLevel(logging.WARNING)
         coordinator = Coordinator.build(
             root,
             acquire_runtime_lock=True,

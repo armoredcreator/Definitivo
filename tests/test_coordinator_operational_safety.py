@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from armored_core.coordinator import Coordinator
 from armored_core.database import Database
@@ -42,6 +43,40 @@ class _Publisher:
 
 
 class CoordinatorOperationalSafetyTests(unittest.TestCase):
+    def test_bounded_start_returns_failure_when_catchup_is_blocked(self):
+        with tempfile.TemporaryDirectory() as td:
+            storage = Storage(Path(td))
+            db = Database(storage.database / "db.sqlite")
+            budget = SimpleNamespace(
+                run_id="bounded-failure",
+                limit=1,
+                assigned_count=0,
+                claim=lambda _items: None,
+                assigned_ids=lambda: set(),
+                close=lambda: None,
+            )
+            coordinator = Coordinator(
+                db, storage, _Vision(), _Studio(), _Publisher(),
+                source=None, catch_up_budget=budget,
+            )
+            coordinator.startup_reconciler.run = lambda: None
+            coordinator.recover_pending = lambda: None
+
+            async def fail_bounded_run():
+                coordinator._last_catch_up_error = "bounded-catchup-failed"
+
+            coordinator._run_catch_up_with_recovery_async = fail_bounded_run
+            try:
+                with self.assertRaisesRegex(RuntimeError, "bounded-catchup-failed"):
+                    coordinator.run_forever()
+                self.assertIsNone(
+                    db.conn.execute(
+                        "SELECT 1 FROM runtime_locks WHERE name='coordinator'"
+                    ).fetchone()
+                )
+            finally:
+                coordinator.close()
+
     def test_run_forever_releases_runtime_lock_after_live_failure(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

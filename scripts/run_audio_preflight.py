@@ -14,6 +14,7 @@ def main() -> int:
     credentials = root / "credentials" / "project.env"
     if credentials.is_file():
         load_dotenv(credentials, override=True)
+    os.environ["ARMORED_ROOT"] = str(root)
     provider = (os.getenv("ARMORED_IA_PROVIDER") or "ollama").strip().casefold()
     provider_configured = provider == "ollama" or (
         provider == "gemini" and bool(os.getenv("GEMINI_API_KEY"))
@@ -21,11 +22,19 @@ def main() -> int:
     audio_model_cache = Path(os.getenv("ARMORED_AUDIO_MODEL_CACHE") or "runtime/models/audio").expanduser()
     if not audio_model_cache.is_absolute():
         audio_model_cache = root / audio_model_cache
+    audio_model_cache = audio_model_cache.resolve()
+    os.environ["ARMORED_AUDIO_MODEL_CACHE"] = str(audio_model_cache)
+    rvc_base_dir = root / "runtime" / "models" / "rvc" / "base_model"
+    rvc_base_files = ("hubert_base.pt", "rmvpe.pt", "rmvpe.onnx")
     checks = {
         "python_311": sys.version_info[:3] == (3, 11, 9),
         "speech_effect": (root / "ArmoredSpeech" / "assets" / "efeitosonoro.wav").is_file(),
         "audio_model_cache": audio_model_cache.is_dir() and any(audio_model_cache.rglob("*")),
         "rvc_model": any((root / "ArmoredSpeech" / "runtime" / "rvc" / "models").rglob("*.pth")),
+        "rvc_base_models": all(
+            (rvc_base_dir / name).is_file() and (rvc_base_dir / name).stat().st_size > 0
+            for name in rvc_base_files
+        ),
         "ai_provider_configured": provider_configured,
     }
     for module in ("faster_whisper", "torch", "transformers", "rvc_python", "telegram"):
