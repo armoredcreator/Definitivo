@@ -95,7 +95,9 @@ _GENDERED_PRODUCT_NOUNS = {
     "mochila": ("f", "s"), "mochilas": ("f", "p"),
     "mascara": ("f", "s"), "mascaras": ("f", "p"),
     "luminaria": ("f", "s"), "luminarias": ("f", "p"),
+    "bebida": ("f", "s"), "bebidas": ("f", "p"),
     "chinelo": ("m", "s"), "chinelos": ("m", "p"),
+    "cafe": ("m", "s"), "cafes": ("m", "p"),
     # "tênis" has the same written form in singular and plural.
     "tenis": ("m", None), "sapato": ("m", "s"), "sapatos": ("m", "p"),
     "radio": ("m", "s"), "radios": ("m", "p"),
@@ -125,12 +127,17 @@ _REACTION_ADJECTIVE_PARADIGMS = {
     "bonit": {("m", "s"): "bonito", ("m", "p"): "bonitos", ("f", "s"): "bonita", ("f", "p"): "bonitas"},
     "lind": {("m", "s"): "lindo", ("m", "p"): "lindos", ("f", "s"): "linda", ("f", "p"): "lindas"},
     "charmos": {("m", "s"): "charmoso", ("m", "p"): "charmosos", ("f", "s"): "charmosa", ("f", "p"): "charmosas"},
+    # Temperature terms are common in product captions and must agree in
+    # number even though "quente" itself does not change for gender.
+    "quent": {("m", "s"): "quente", ("m", "p"): "quentes", ("f", "s"): "quente", ("f", "p"): "quentes"},
+    "fri": {("m", "s"): "frio", ("m", "p"): "frios", ("f", "s"): "fria", ("f", "p"): "frias"},
 }
 _GENDERED_REACTION_ADJECTIVES = {
     form: agreement
     for paradigm in _REACTION_ADJECTIVE_PARADIGMS.values()
     for agreement, form in paradigm.items()
 }
+_GENDERED_REACTION_ADJECTIVES.update({"quente": ("x", "s"), "quentes": ("x", "p")})
 _REACTION_ADJECTIVE_BASE = {
     form: base
     for base, paradigm in _REACTION_ADJECTIVE_PARADIGMS.items()
@@ -306,6 +313,17 @@ def _context_tokens(product_name: str, product_context: dict[str, Any] | None) -
     return tokens
 
 
+def _context_token_stems(token: str) -> set[str]:
+    """Match common Portuguese singular/plural and gender inflections safely."""
+    value = str(token)
+    variants = {value}
+    if len(value) >= 5 and value.endswith("s"):
+        variants.add(value[:-1])
+    if len(value) >= 5 and value.endswith(("a", "o", "e")):
+        variants.add(value[:-1])
+    return variants
+
+
 def caption_product_anchor_terms(
     product_context: dict[str, Any] | None,
     *,
@@ -424,16 +442,14 @@ def _main_phrase_is_contextual(
     product_context: dict[str, Any] | None,
 ) -> bool:
     context = _context_tokens(product_name, product_context)
+    context_stems = set().union(*(_context_token_stems(value) for value in context)) if context else set()
     grounded = False
     for raw in words:
         token = _fold(raw)
         if token in PRODUCT_STOP_WORDS or len(token) < 3:
             continue
         stem = token[:-1] if len(token) >= 5 and token[-1:] in {"a", "o", "e", "s"} else token
-        if token in context or stem in {
-            (candidate[:-1] if len(candidate) >= 5 and candidate[-1:] in {"a", "o", "e", "s"} else candidate)
-            for candidate in context
-        }:
+        if token in context or _context_token_stems(token) & context_stems:
             grounded = True
             continue
         if (_MAIN_CONTEXT_ALIASES.get(token, set()) | _MAIN_CONTEXT_ALIASES.get(stem, set())) & context:
@@ -463,7 +479,9 @@ def _has_known_agreement_error(words: list[str]) -> bool:
         if not nouns:
             continue
         _noun_index, noun = min(nouns, key=lambda candidate: abs(candidate[0] - adjective_index))
-        if adjective[0] != noun[0] or (noun[1] is not None and adjective[1] != noun[1]):
+        if (adjective[0] != "x" and adjective[0] != noun[0]) or (
+            noun[1] is not None and adjective[1] != noun[1]
+        ):
             return True
     return False
 

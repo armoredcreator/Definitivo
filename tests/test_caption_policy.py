@@ -262,6 +262,32 @@ def test_policy_rejects_clear_gender_and_number_disagreement():
         product_context=footwear,
     ).caption == "🧡 Tênis bonitos\n#tenis"
 
+    thermal = {
+        "productName": (
+            "Copo Térmico de Cafe 450 ml Inox com Display Digital Tampa Trava "
+            "Mantém Bebidas Quentes ou Frias"
+        ),
+    }
+    raw = "🧡 Cafe quentes elegante\n#Cafe #Inox"
+    with pytest.raises(CaptionPolicyError, match="concordância"):
+        validate_caption(
+            raw,
+            product_name=thermal["productName"],
+            product_context=thermal,
+        )
+    corrected = normalize_caption(
+        raw,
+        product_name=thermal["productName"],
+        product_context=thermal,
+    )
+    assert corrected.caption == "🧡 Cafe quente elegante\n#Cafe #Inox"
+    assert "known_adjective_agreement_inflected" in corrected.corrections
+    assert validate_caption(
+        corrected.caption,
+        product_name=thermal["productName"],
+        product_context=thermal,
+    ) == corrected.caption
+
 
 def test_caption_generator_safely_inflects_known_agreement_before_policy():
     class Provider:
