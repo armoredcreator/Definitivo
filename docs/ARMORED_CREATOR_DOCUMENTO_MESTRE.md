@@ -198,3 +198,8 @@ Evidência estruturada: `storage/validation/completion-certification-2026-10-25.
 | Operação prolongada / outro PC | Ainda pendentes: ensaio contínuo controlado de descoberta/produção e validação física em uma segunda máquina Windows. A instalação isolada no mesmo notebook passou bootstrap, `START_ALL.bat` e 779 testes. |
 
 A evidência estruturada local foi atualizada em `storage/validation/completion-certification-2026-10-25.json`. A varredura Sync histórica agora está comprovada; a Fase 15 continua aberta até Vision/produção do backlog dentro dos limites, resolução segura dos recibos em `RECOVERY`, teste prolongado, portabilidade em outra máquina e CI da correção mais recente.
+
+
+### Revalidação da instalação isolada — 25/10/2026
+
+Após a proteção contra duplicados arquivados, o checkout isolado no mesmo notebook repetiu a suíte completa com 779 aprovados, 4 ignorados e 0 falhas; `START_ALL.bat` passou com os sete módulos, configuração e bancos daquela cópia. O SQLite dessa instalação de teste é um snapshot operacional anterior à varredura histórica ampliada. O banco operacional atualizado foi validado separadamente após a migração: sete bancos íntegros, sem violações FK, e `START_ALL.bat` aprovado. A validação em outra máquina física continua pendente.
