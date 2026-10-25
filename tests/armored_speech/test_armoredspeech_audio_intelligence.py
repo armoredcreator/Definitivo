@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 
 import numpy as np
 
@@ -37,6 +38,32 @@ def test_audio_set_logits_use_independent_sigmoid_scores():
     assert scores[2] < 0.15
     # Unlike softmax, two labels can both have high confidence.
     assert scores[0] + scores[1] > 1.5
+
+
+def test_language_sample_measures_speech_rate_for_rvc_gate(monkeypatch):
+    segments = [
+        SimpleNamespace(start=0.0, end=3.0, text="um dois tres quatro cinco seis"),
+        SimpleNamespace(start=3.0, end=6.0, text="sete oito nove dez onze doze"),
+    ]
+
+    class FakeWhisperModel:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def transcribe(self, *_args, **_kwargs):
+            return iter(segments), SimpleNamespace(language="pt", language_probability=0.99)
+
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "faster_whisper",
+        ModuleType("faster_whisper"),
+    )
+    __import__("sys").modules["faster_whisper"].WhisperModel = FakeWhisperModel
+    analyzer = AudioIntelligence()
+    language, confidence = analyzer._detect_language(np.ones(16_000, dtype=np.float32))
+    assert language == "pt"
+    assert confidence == 0.99
+    assert analyzer._last_speech_rate_wpm == 120.0
 
 
 def test_portuguese_narration_with_music_is_mixed_mode(tmp_path):

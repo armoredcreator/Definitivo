@@ -7,6 +7,7 @@ import pytest
 import requests
 
 from ArmoredIA.caption.generator import CaptionGenerator, CaptionGenerationError
+from ArmoredIA.caption.grounded import compose_grounded_caption
 from ArmoredIA.caption.policy import (
     CaptionPolicyError,
     caption_generation_vocabulary,
@@ -352,7 +353,8 @@ def test_local_generation_vocabulary_excludes_brand_model_and_technical_terms():
     })
     folded_text = {word.casefold() for word in text_words}
     folded_tags = {word.casefold() for word in hashtags}
-    assert {"acidificante", "máscara", "equilíbrio", "bonita", "elegante"} <= folded_text
+    assert {"acidificante", "máscara", "equilíbrio"} <= folded_text
+    assert "bonita" not in folded_text and "elegante" not in folded_text
     assert "delicado" not in folded_text and "delicada" not in folded_text
     assert "detalhe" not in folded_text and "visual" not in folded_text
     assert "amend" not in folded_text and "essencial" not in folded_text
@@ -361,9 +363,83 @@ def test_local_generation_vocabulary_excludes_brand_model_and_technical_terms():
     assert "amend" not in folded_tags and "ph" not in folded_tags
 
 
+def test_policy_restores_accents_from_vision_product_name():
+    assert _normalize_validate(
+        "Sandalia Leve\n#Sandália #Leve",
+        product_name="Sandália Feminina Leve Confortável Leve De Dedo",
+        product_context={"productName": "Sandália Feminina Leve Confortável Leve De Dedo"},
+    ) == "🧡 Sandália leve\n#Sandália #Leve"
+
+    assert _normalize_validate(
+        "Sandália Leve Confortável\n#Sandália #Leve",
+        product_name="Sandália Feminina Leve Confortável Leve De Dedo",
+        product_context={"productName": "Sandália Feminina Leve Confortável Leve De Dedo"},
+    ) == "🧡 Sandália leve confortável\n#Sandália #Leve"
+
+
+def test_grounded_caption_uses_only_a_supported_category_and_descriptor():
+    context = {
+        "productName": "Sandália Feminina Leve Confortável Leve De Dedo",
+        "itemId": 22299195234,
+        "shopId": 1662957095,
+        "shopName": "Lessy Shoes",
+        "sales": 33,
+        "ratingStar": "4.8",
+        "imageUrl": "https://example.invalid/image",
+    }
+    raw = compose_grounded_caption(context)
+    assert raw == "Sandália Leve\n#Sandália #Leve"
+    assert _normalize_validate(
+        raw,
+        product_name=context["productName"],
+        product_context=context,
+    ) == "🧡 Sandália leve\n#Sandália #Leve"
+
+
+@pytest.mark.parametrize(
+    ("product_name", "expected"),
+    [
+        (
+            "Scarpin Feminino Shekinah Bico Fino Salto Alto Geométrico Taça Tiras Cruzadas Moda",
+            "Scarpin de salto geométrico\n#Scarpin #Salto",
+        ),
+        (
+            "Amend Essencial Acidificante Máscara Equilíbrio do PH - 250g",
+            "Máscara acidificante\n#Máscara #Acidificante",
+        ),
+        (
+            "Chinelo feminino NO STRASS Verao 2026",
+            "Chinelo de verão\n#Chinelo #Verão",
+        ),
+        (
+            "Tênis Feminino Esportes Dia a Dia Treino Casual Promoção",
+            "Tênis para treino\n#Tênis #Treino",
+        ),
+        (
+            "Tênis Feminino Casual Tradicional Super Macio Lançamento",
+            "Tênis macio\n#Tênis #Macio",
+        ),
+        (
+            "Smartwatch W29 Pro Serie 9 e Relogio inteligente S11 Ilha Dinamica Nfc Armazena e responde Original",
+            "Relógio com ilha dinâmica\n#Smartwatch #Relógio",
+        ),
+    ],
+)
+def test_grounded_fallbacks_are_contextual_and_policy_valid(product_name, expected):
+    context = {"productName": product_name}
+    raw = compose_grounded_caption(context)
+    assert raw == expected
+    normalized = normalize_caption(raw, product_name=product_name, product_context=context).caption
+    assert validate_caption(
+        normalized, product_name=product_name, product_context=context,
+    ) == normalized
+
+
 def test_policy_blocks_only_hard_leaks():
     invalid = (
         "Compre agora 🔥\n#oferta",
+        "🧡 Sandália leve essa!\n#sandalia",
+        "🧡 A sandália da com.\n#sandalia",
         "Batom matte ✨\n#beleza",
         "Olha isso ✨\n#batommatte",
         "Tramontina linda ✨\n#casa",

@@ -282,6 +282,7 @@ def test_audio_package_builder_prepares_speech_tracks_and_graph_without_final_au
         "NOISE",
         "NO_USABLE_NARRATION",
         "FOREIGN_SPEECH",
+        "PT_BR_NARRATION_UNSUITABLE",
     ],
 )
 def test_effect_only_route_builds_silence_input_and_never_calls_rvc(
@@ -311,6 +312,9 @@ def test_effect_only_route_builds_silence_input_and_never_calls_rvc(
     if audio_class == "FOREIGN_SPEECH":
         directive["speech_detected"] = True
         directive["language"] = "en"
+    if audio_class == "PT_BR_NARRATION_UNSUITABLE":
+        directive["speech_detected"] = True
+        directive["language"] = "pt-br"
     from ArmoredSpeech import rvc_engine as rvc
 
     monkeypatch.setattr(

@@ -210,6 +210,23 @@ class Database:
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
+        CREATE TABLE IF NOT EXISTS publication_receipt_history (
+            history_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            content_id TEXT NOT NULL,
+            idempotency_key TEXT NOT NULL,
+            published_message_id TEXT,
+            confirmed INTEGER NOT NULL,
+            verification_status TEXT NOT NULL,
+            destination_chat_id TEXT,
+            destination_topic_id INTEGER,
+            verified_at TEXT,
+            original_created_at TEXT NOT NULL,
+            original_updated_at TEXT NOT NULL,
+            resolution_id INTEGER NOT NULL,
+            evidence_json TEXT NOT NULL,
+            archived_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(content_id, resolution_id)
+        );
         CREATE TABLE IF NOT EXISTS sync_state (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL,
@@ -1904,6 +1921,105 @@ class Database:
             (content_id, item.state.value, item.state.value, "publication-absence-confirmed-by-verifier"),
         )
         self.conn.commit()
+
+    def archive_publication_after_absence_reconciliation(
+        self, item_id: str, *, resolution_id: int, evidence: dict
+    ) -> str | None:
+        """Archive a reconciled receipt and prepare a fresh idempotency generation.
+
+        This is deliberately separate from publication_absent_confirmed():
+        historical publication rows are immutable until an operator supplies a
+        complete, topic-scoped absence resolution. The previous receipt remains
+        in publication_receipt_history before the active row is reset.
+        """
+        import json
+
+        content_id = str(item_id)
+        if not isinstance(resolution_id, int) or isinstance(resolution_id, bool) or resolution_id <= 0:
+            raise ValueError("publication-republication-requires-quarantine-resolution-id")
+        if not isinstance(evidence, dict) or evidence.get("checked_content_id") != content_id:
+            raise ValueError("publication-republication-requires-matching-absence-evidence")
+        if (
+            evidence.get("method") != "telegram_topic_history_scan"
+            or evidence.get("scan_complete") is not True
+            or evidence.get("matched_message_ids") != []
+            or evidence.get("operator_authorized") is not True
+        ):
+            raise ValueError("publication-republication-requires-complete-absence-resolution")
+
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.conn.execute(
+                "SELECT * FROM publications WHERE content_id=?", (content_id,)
+            ).fetchone()
+            if row is None:
+                self.conn.commit()
+                return None
+            already_prepared = f":reconciled:{resolution_id}"
+            if (
+                str(row["idempotency_key"]).endswith(already_prepared)
+                and str(row["verification_status"]) == "PENDING"
+                and not row["published_message_id"]
+                and not bool(row["confirmed"])
+            ):
+                self.conn.commit()
+                return str(row["idempotency_key"])
+
+            snapshot = dict(row)
+            self.conn.execute(
+                "INSERT OR IGNORE INTO publication_receipt_history "
+                "(content_id,idempotency_key,published_message_id,confirmed,verification_status,"
+                "destination_chat_id,destination_topic_id,verified_at,original_created_at,"
+                "original_updated_at,resolution_id,evidence_json) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    content_id, snapshot["idempotency_key"], snapshot["published_message_id"],
+                    int(snapshot["confirmed"]), str(snapshot["verification_status"]),
+                    snapshot["destination_chat_id"], snapshot["destination_topic_id"],
+                    snapshot["verified_at"], str(snapshot["created_at"]),
+                    str(snapshot["updated_at"]), resolution_id,
+                    json.dumps(evidence, ensure_ascii=False, sort_keys=True),
+                ),
+            )
+            generation_key = f"armoredcreator:content:{content_id}:reconciled:{resolution_id}"
+            self.conn.execute(
+                "UPDATE publications SET idempotency_key=?,published_message_id=NULL,confirmed=0,"
+                "verification_status='PENDING',verified_at=NULL,created_at=CURRENT_TIMESTAMP,"
+                "updated_at=CURRENT_TIMESTAMP WHERE content_id=?",
+                (generation_key, content_id),
+            )
+            self.conn.commit()
+            return generation_key
+        except BaseException:
+            self.conn.rollback()
+            raise
+
+    def is_reconciled_publication_generation(self, item_id: str) -> bool:
+        """Return true only while the active receipt is a fresh, unsent generation.
+
+        A new generation exists only after the quarantine ledger recorded a
+        topic-scoped absence decision and the old receipt was archived. Once a
+        send starts, the status changes and this exemption no longer applies.
+        """
+        content_id = str(item_id)
+        row = self.conn.execute(
+            "SELECT p.idempotency_key,p.published_message_id,p.confirmed,p.verification_status,"
+            "h.resolution_id FROM publications p JOIN publication_receipt_history h "
+            "ON h.content_id=p.content_id WHERE p.content_id=? "
+            "ORDER BY h.resolution_id DESC LIMIT 1",
+            (content_id,),
+        ).fetchone()
+        if row is None:
+            return False
+        expected_key = f"armoredcreator:content:{content_id}:reconciled:{int(row['resolution_id'])}"
+        return (
+            str(row["idempotency_key"] or "") == expected_key
+            and not row["published_message_id"]
+            and not bool(row["confirmed"])
+            and str(row["verification_status"] or "").upper() in {
+                "PENDING", "ABSENT_CONFIRMED",
+            }
+        )
 
     def publication(self, item_id: int):
         return self.conn.execute(

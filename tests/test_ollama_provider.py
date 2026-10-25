@@ -106,7 +106,8 @@ def test_ollama_generator_defaults_to_one_grounded_candidate(monkeypatch):
     text_pattern = captions_schema["items"]["properties"]["text"]["pattern"]
     hashtag_pattern = captions_schema["items"]["properties"]["hashtags"]["items"]["pattern"]
     import re
-    assert re.fullmatch(text_pattern, "Chinelo charmoso.")
+    assert re.fullmatch(text_pattern, "Chinelo casual.")
+    assert not re.fullmatch(text_pattern, "Chinelo charmoso.")
     assert re.fullmatch(text_pattern, "Chinelo com detalhe em strass.")
     assert re.fullmatch(hashtag_pattern, "#chinelo")
     assert not re.fullmatch(hashtag_pattern, "#viral")
@@ -187,7 +188,8 @@ def test_ollama_schema_requires_product_head_without_forcing_it_first(monkeypatc
     }, 1)
 
     text_pattern = calls[0]["format"]["properties"]["captions"]["items"]["properties"]["text"]["pattern"]
-    assert re.fullmatch(text_pattern, "Bolsa bonita")
+    assert re.fullmatch(text_pattern, "Bolsa compartimento")
+    assert not re.fullmatch(text_pattern, "Bolsa bonita")
     assert re.fullmatch(text_pattern, "Bolsa para computador")
     assert not re.fullmatch(text_pattern, "Hidratação completa para o corpo")
     assert not re.fullmatch(text_pattern, "Acolchoado elegante para notebook e bolsa extra")

@@ -9,6 +9,7 @@ from ArmoredSpeech.model_processor import ModelProcessor
 def fake_result(
     mode, *, language="unknown", speech_activity=0.0,
     speech_probability=None, music_probability=0.0, noise_probability=0.0,
+    speech_rate_wpm=180.0,
 ):
     return SimpleNamespace(
         mode=mode, language=language, confidence=0.92, duration_seconds=8.0,
@@ -18,6 +19,7 @@ def fake_result(
         speech_probability=speech_probability,
         music_probability=music_probability,
         noise_probability=noise_probability,
+        speech_rate_wpm=speech_rate_wpm,
         as_dict=lambda: {"mode": mode, "language": language,
                          "speech_activity_ratio": speech_activity,
                          "speech_probability": speech_probability,
@@ -35,6 +37,43 @@ def test_mixed_portuguese_speech_is_rvc_eligible_and_requires_separation():
     assert result.audio_class is AudioClass.PT_BR_NARRATION_WITH_MUSIC
     assert result.rvc_eligible
     assert result.needs_vocal_separation
+
+
+def test_fast_portuguese_narration_is_routed_away_from_rvc():
+    processor = ModelProcessor()
+    processor.intelligence.analyze = lambda _path: fake_result(
+        AudioMode.SPEECH, language="pt", speech_activity=0.6,
+        speech_rate_wpm=285.0,
+    )
+    result = processor.analyze(Path("sample.mp4"))
+    assert result.audio_class is AudioClass.PT_BR_NARRATION_UNSUITABLE
+    assert result.speech_detected
+    assert not result.rvc_eligible
+    assert '"rvc_gate": "SPEECH_RATE_TOO_FAST"' in result.rationale
+
+
+def test_unmeasured_portuguese_speech_fails_closed_from_rvc():
+    processor = ModelProcessor()
+    processor.intelligence.analyze = lambda _path: fake_result(
+        AudioMode.SPEECH, language="pt", speech_activity=0.6,
+        speech_rate_wpm=None,
+    )
+    result = processor.analyze(Path("sample.mp4"))
+    assert result.audio_class is AudioClass.PT_BR_NARRATION_UNSUITABLE
+    assert not result.rvc_eligible
+    assert '"rvc_gate": "SPEECH_RATE_UNVERIFIED"' in result.rationale
+
+
+def test_portuguese_speech_at_configured_rate_limit_remains_rvc_eligible(monkeypatch):
+    monkeypatch.setenv("ARMORED_AUDIO_MAX_RVC_SPEECH_WPM", "230")
+    processor = ModelProcessor()
+    processor.intelligence.analyze = lambda _path: fake_result(
+        AudioMode.SPEECH, language="pt", speech_activity=0.6,
+        speech_rate_wpm=230.0,
+    )
+    result = processor.analyze(Path("sample.mp4"))
+    assert result.audio_class is AudioClass.PT_BR_NARRATION
+    assert result.rvc_eligible
 
 
 def test_unverified_voice_is_unknown_and_never_rvc_eligible():

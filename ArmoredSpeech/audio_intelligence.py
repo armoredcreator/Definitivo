@@ -46,6 +46,7 @@ class AudioIntelligenceResult:
     music_probability: float | None = None
     speech_activity_ratio: float | None = None
     noise_probability: float | None = None
+    speech_rate_wpm: float | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -72,6 +73,10 @@ class AudioIntelligenceResult:
             "noise_probability": (
                 round(float(self.noise_probability), 3)
                 if self.noise_probability is not None else None
+            ),
+            "speech_rate_wpm": (
+                round(float(self.speech_rate_wpm), 1)
+                if self.speech_rate_wpm is not None else None
             ),
         }
 
@@ -456,6 +461,7 @@ class AudioIntelligence:
         import logging
 
         logger = logging.getLogger(__name__)
+        self._last_speech_rate_wpm = None
         max_seconds = max(2, int(os.getenv("ARMORED_AUDIO_LANGUAGE_SECONDS", "8")))
         sample = samples[: self.SAMPLE_RATE * max_seconds]
         if sample.size < self.SAMPLE_RATE:
@@ -495,10 +501,19 @@ class AudioIntelligence:
                 beam_size=1,
                 vad_filter=False,
             )
-            # Force the lazy transcription generator to execute. Language
-            # metadata alone is useful, but forcing decoding makes failures
-            # visible here rather than later in the Studio pipeline.
-            next(iter(segments), None)
+            # Decode the short language sample to measure speech pace too.
+            # RVC can make already rapid speech substantially less intelligible.
+            decoded_segments = list(segments)
+            spoken_seconds = sum(
+                max(0.0, float(segment.end) - float(segment.start))
+                for segment in decoded_segments
+            )
+            spoken_words = sum(
+                len(re.findall(r"[A-Za-zÀ-ÿ0-9]+", str(segment.text or "")))
+                for segment in decoded_segments
+            )
+            if spoken_words >= 8 and spoken_seconds >= 2.0:
+                self._last_speech_rate_wpm = 60.0 * spoken_words / spoken_seconds
             language = str(getattr(info, "language", "unknown") or "unknown").lower()
             confidence = float(getattr(info, "language_probability", 0.0) or 0.0)
             if confidence < minimum:
@@ -667,6 +682,7 @@ class AudioIntelligence:
             )
 
         language, language_confidence = self._detect_language(samples)
+        speech_rate_wpm = getattr(self, "_last_speech_rate_wpm", None)
         minimum_language_confidence = float(
             os.getenv("ARMORED_AUDIO_LANGUAGE_MIN_CONFIDENCE", "0.20")
         )
@@ -699,4 +715,5 @@ class AudioIntelligence:
             music_probability=music_probability,
             speech_activity_ratio=speech_activity_ratio,
             noise_probability=noise_probability,
+            speech_rate_wpm=speech_rate_wpm,
         )

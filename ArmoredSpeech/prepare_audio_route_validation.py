@@ -20,6 +20,7 @@ from .studio_bridge import BridgeError, export_audio_directive
 
 
 ROUTE_CLASSES = (
+    "PT_BR_NARRATION_UNSUITABLE",
     "MUSIC_ONLY",
     "NO_AUDIO",
     "NOISE",

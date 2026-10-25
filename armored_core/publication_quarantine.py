@@ -35,11 +35,15 @@ class PublicationQuarantine:
                 " FOREIGN KEY(content_id) REFERENCES quarantined_publications(content_id));"
                 "CREATE INDEX IF NOT EXISTS idx_quarantine_evidence_content"
                 " ON quarantine_evidence(content_id,evidence_id);"
+                "CREATE TABLE IF NOT EXISTS quarantine_resolutions ("
+                " resolution_id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                " content_id TEXT NOT NULL, resolved_through_evidence_id INTEGER NOT NULL,"
+                " decision TEXT NOT NULL CHECK(decision='ABSENT'),"
+                " evidence_json TEXT NOT NULL, resolved_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+                " FOREIGN KEY(content_id) REFERENCES quarantined_publications(content_id));"
+                "CREATE INDEX IF NOT EXISTS idx_quarantine_resolutions_content"
+                " ON quarantine_resolutions(content_id,resolved_through_evidence_id);"
             )
-            self._ids = {
-                str(row[0])
-                for row in conn.execute("SELECT content_id FROM quarantined_publications")
-            }
         finally:
             conn.close()
 
@@ -50,13 +54,38 @@ class PublicationQuarantine:
         return conn
 
     def contains(self, content_id: str) -> bool:
-        return str(content_id) in self._ids
+        conn = self._connect()
+        try:
+            return conn.execute(
+                "SELECT 1 FROM quarantined_publications q "
+                "WHERE q.content_id=? AND COALESCE(("
+                " SELECT MAX(e.evidence_id) FROM quarantine_evidence e "
+                " WHERE e.content_id=q.content_id),0) > COALESCE(("
+                " SELECT MAX(r.resolved_through_evidence_id) FROM quarantine_resolutions r "
+                " WHERE r.content_id=q.content_id),0)",
+                (str(content_id),),
+            ).fetchone() is not None
+        finally:
+            conn.close()
 
     def quarantined_ids(self) -> set[str]:
-        return set(self._ids)
+        conn = self._connect()
+        try:
+            return {
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT q.content_id FROM quarantined_publications q "
+                    "WHERE COALESCE((SELECT MAX(e.evidence_id) FROM quarantine_evidence e "
+                    "WHERE e.content_id=q.content_id),0) > COALESCE(("
+                    "SELECT MAX(r.resolved_through_evidence_id) FROM quarantine_resolutions r "
+                    "WHERE r.content_id=q.content_id),0)"
+                )
+            }
+        finally:
+            conn.close()
 
     def unresolved_count(self) -> int:
-        return len(self._ids)
+        return len(self.quarantined_ids())
 
     def observed_outcomes(self) -> set[str]:
         conn = self._connect()
@@ -121,15 +150,22 @@ class PublicationQuarantine:
                 key, status, row.get("published_message_id"), int(bool(row.get("confirmed"))),
                 row.get("destination_chat_id"), row.get("destination_topic_id"),
             )
-            if tuple(existing) != expected:
+            active = conn.execute(
+                "SELECT COALESCE((SELECT MAX(evidence_id) FROM quarantine_evidence "
+                "WHERE content_id=?),0) > COALESCE((SELECT MAX(resolved_through_evidence_id) "
+                "FROM quarantine_resolutions WHERE content_id=?),0)",
+                (content_id, content_id),
+            ).fetchone()[0]
+            if active and tuple(existing) != expected:
                 raise RuntimeError("quarantined-publication-receipt-snapshot-changed")
+            if not active:
+                snapshot["new_quarantine_cycle"] = True
             conn.execute(
                 "INSERT INTO quarantine_evidence(content_id,observed_outcome,evidence_json) "
                 "VALUES(?, 'UNKNOWN', ?)",
                 (content_id, json.dumps(snapshot, ensure_ascii=False, sort_keys=True)),
             )
             conn.commit()
-            self._ids.add(content_id)
         except BaseException:
             conn.rollback()
             raise
@@ -166,15 +202,108 @@ class PublicationQuarantine:
                 "SELECT idempotency_key,original_status,original_message_id,original_confirmed "
                 "FROM quarantined_publications WHERE content_id=?", (content_id,),
             ).fetchone()
-            if tuple(existing) != (key, "LEGACY_RECEIPT_MISSING", None, 0):
+            active = conn.execute(
+                "SELECT COALESCE((SELECT MAX(evidence_id) FROM quarantine_evidence "
+                "WHERE content_id=?),0) > COALESCE((SELECT MAX(resolved_through_evidence_id) "
+                "FROM quarantine_resolutions WHERE content_id=?),0)",
+                (content_id, content_id),
+            ).fetchone()[0]
+            if active and tuple(existing) != (key, "LEGACY_RECEIPT_MISSING", None, 0):
                 raise RuntimeError("legacy-quarantine-snapshot-changed")
+            if not active:
+                snapshot["new_quarantine_cycle"] = True
             conn.execute(
                 "INSERT INTO quarantine_evidence(content_id,observed_outcome,evidence_json) "
                 "VALUES(?, 'UNKNOWN', ?)",
                 (content_id, json.dumps(snapshot, ensure_ascii=False, sort_keys=True)),
             )
             conn.commit()
-            self._ids.add(content_id)
+        except BaseException:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def resolve_absent(self, item_id: str, *, evidence: dict[str, Any]) -> int:
+        """Resolve a quarantine only with a complete, topic-scoped live absence record.
+
+        The original quarantine row and all UNKNOWN observations remain immutable.
+        A later UNKNOWN observation receives a larger evidence ID and reactivates
+        the fence automatically.
+        """
+        content_id = str(item_id)
+        if not isinstance(evidence, dict):
+            raise ValueError("absence-reconciliation-requires-structured-evidence")
+        if evidence.get("method") != "telegram_topic_history_scan":
+            raise ValueError("absence-reconciliation-requires-topic-history-scan")
+        if evidence.get("checked_content_id") != content_id:
+            raise ValueError("absence-reconciliation-content-id-mismatch")
+        if evidence.get("scan_complete") is not True:
+            raise ValueError("absence-reconciliation-requires-complete-topic-scan")
+        message_ids = evidence.get("scanned_message_ids")
+        codes = evidence.get("checked_link_codes")
+        matches = evidence.get("matched_message_ids")
+        if not isinstance(message_ids, list) or not message_ids:
+            raise ValueError("absence-reconciliation-requires-scanned-message-ids")
+        if not isinstance(codes, list) or not codes or any(not str(code).strip() for code in codes):
+            raise ValueError("absence-reconciliation-requires-all-link-codes")
+        if matches != []:
+            raise ValueError("absence-reconciliation-found-live-candidate")
+        if evidence.get("operator_authorized") is not True:
+            raise ValueError("absence-reconciliation-requires-explicit-operator-authorization")
+        try:
+            chat_id = str(int(evidence.get("chat_id")))
+            topic_id = int(evidence.get("topic_id"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("absence-reconciliation-invalid-destination") from exc
+        if not chat_id.startswith("-100") or topic_id <= 0:
+            raise ValueError("absence-reconciliation-invalid-destination")
+
+        conn = self._connect()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            quarantine = conn.execute(
+                "SELECT original_message_id,destination_chat_id,destination_topic_id "
+                "FROM quarantined_publications WHERE content_id=?",
+                (content_id,),
+            ).fetchone()
+            if quarantine is None:
+                raise KeyError(content_id)
+            if quarantine[1] is not None and str(quarantine[1]) != chat_id:
+                raise ValueError("absence-reconciliation-chat-mismatch")
+            if quarantine[2] is not None and int(quarantine[2]) != topic_id:
+                raise ValueError("absence-reconciliation-topic-mismatch")
+            if quarantine[0] is not None:
+                if str(evidence.get("exact_receipt_id") or "") != str(quarantine[0]):
+                    raise ValueError("absence-reconciliation-receipt-id-mismatch")
+                if evidence.get("exact_receipt_status") != "ABSENT":
+                    raise ValueError("absence-reconciliation-receipt-not-absent")
+            elif evidence.get("exact_receipt_status") not in {"NO_PRIOR_ID", "ABSENT"}:
+                raise ValueError("absence-reconciliation-receipt-status-invalid")
+
+            evidence_id = conn.execute(
+                "SELECT COALESCE(MAX(evidence_id),0) FROM quarantine_evidence WHERE content_id=?",
+                (content_id,),
+            ).fetchone()[0]
+            if int(evidence_id) <= 0:
+                raise RuntimeError("absence-reconciliation-missing-unknown-history")
+            previous = conn.execute(
+                "SELECT resolution_id,resolved_through_evidence_id FROM quarantine_resolutions "
+                "WHERE content_id=? ORDER BY resolution_id DESC LIMIT 1",
+                (content_id,),
+            ).fetchone()
+            if previous is not None and int(previous[1]) >= int(evidence_id):
+                conn.commit()
+                return int(previous[0])
+            conn.execute(
+                "INSERT INTO quarantine_resolutions "
+                "(content_id,resolved_through_evidence_id,decision,evidence_json) "
+                "VALUES(?,?, 'ABSENT', ?)",
+                (content_id, int(evidence_id), json.dumps(evidence, ensure_ascii=False, sort_keys=True)),
+            )
+            resolution_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+            conn.commit()
+            return resolution_id
         except BaseException:
             conn.rollback()
             raise

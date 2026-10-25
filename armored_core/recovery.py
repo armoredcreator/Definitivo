@@ -127,7 +127,10 @@ class Recovery:
             )
 
         if item.state in {State.SPEECH, State.STUDIO_BATCH} and self.speech_studio_runner is not None:
-            if self.db.publication(item_id):
+            if (
+                self.db.publication(item_id)
+                and not self.db.is_reconciled_publication_generation(item_id)
+            ):
                 raise RuntimeError("publication-record-unexpected-before-speech-studio-v5-complete")
             self.db.record_recovery(item_id)
             self.db.transition(item_id, State.RECOVERY, "recover-interrupted-speech-studio-v5")
@@ -171,6 +174,21 @@ class Recovery:
                 # preflight-only failure must not destroy a completed render.
                 # The outer Coordinator/Hub still revalidates bytes before send.
                 self._resume_durable_result(item_id, "recovery-v5-hub-preflight-not-sent")
+                return
+
+            if (
+                self.speech_studio_runner is not None
+                and self.db.is_reconciled_publication_generation(item_id)
+                and self._has_speech_studio_v5_completion(item_id)
+                and item.result_path is not None
+                and item.result_path.is_file()
+            ):
+                # A live topic scan already proved the old receipt absent; if
+                # the fresh generation has not crossed the send boundary,
+                # retain the completed render and resume at Hub.
+                self._resume_durable_result(
+                    item_id, "recovery-resume-explicitly-reconciled-v5-result",
+                )
                 return
 
             check = self.pipeline.publisher.check_publication(item)

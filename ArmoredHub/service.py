@@ -950,8 +950,14 @@ class ArmoredHub:
             )
 
         existing = self.db.publication(item.item_id)
-        if existing and existing["confirmed"]:
-            return PublicationResult(True, existing["published_message_id"])
+        if existing:
+            verification_status = str(existing["verification_status"] or "").upper()
+            if bool(existing["confirmed"]) and verification_status == "CONFIRMED":
+                return PublicationResult(True, existing["published_message_id"])
+            if bool(existing["confirmed"]) or verification_status == "CONFIRMED":
+                raise PublicationUnknownError(
+                    "Recibo de publicação inconsistente; reconciliação explícita necessária"
+                )
 
         if existing is None:
             self.db.publication_started(item.item_id)

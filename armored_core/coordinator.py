@@ -2710,7 +2710,10 @@ class Coordinator:
                 item.state != State.PUBLISHED
                 and item.affiliate_url
                 and item.original_path.is_file()
-                and self.db.publication(item_id) is None
+                and (
+                    self.db.publication(item_id) is None
+                    or self.db.is_reconciled_publication_generation(item_id)
+                )
             ):
                 storage_root = (
                     getattr(self.storage, "storage_root", None)

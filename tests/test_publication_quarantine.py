@@ -63,6 +63,155 @@ def test_legacy_publishing_without_receipt_gets_a_local_quarantine_fence(tmp_pat
     assert status == "LEGACY_RECEIPT_MISSING"
 
 
+def test_topic_scoped_absence_resolution_is_audited_and_later_unknown_reactivates_fence(tmp_path):
+    import sqlite3
+
+    quarantine = PublicationQuarantine(tmp_path / "publication-quarantine.sqlite3")
+    item_id = "-1003788989075_1040"
+    receipt = {
+        "idempotency_key": f"armoredcreator:content:{item_id}",
+        "verification_status": "SENT_UNVERIFIED",
+        "published_message_id": "1339",
+        "confirmed": 1,
+        "destination_chat_id": "-1004341972306",
+        "destination_topic_id": 228,
+    }
+    quarantine.quarantine_unknown(item_id, receipt, evidence={"item_state": "RECOVERY"})
+    proof = {
+        "method": "telegram_topic_history_scan",
+        "checked_content_id": item_id,
+        "chat_id": "-1004341972306",
+        "topic_id": 228,
+        "scan_complete": True,
+        "scanned_message_ids": ["1363", "1360", "228"],
+        "checked_link_codes": ["4fvURQ6ctv", "5fpQxUgaIQ"],
+        "matched_message_ids": [],
+        "exact_receipt_id": "1339",
+        "exact_receipt_status": "ABSENT",
+        "operator_authorized": True,
+    }
+
+    resolution_id = quarantine.resolve_absent(item_id, evidence=proof)
+
+    assert resolution_id > 0
+    assert not quarantine.contains(item_id)
+    assert quarantine.unresolved_count() == 0
+    connection = sqlite3.connect(tmp_path / "publication-quarantine.sqlite3")
+    try:
+        assert connection.execute(
+            "SELECT original_message_id,original_confirmed FROM quarantined_publications "
+            "WHERE content_id=?", (item_id,),
+        ).fetchone() == ("1339", 1)
+        assert connection.execute(
+            "SELECT COUNT(*) FROM quarantine_evidence WHERE content_id=?", (item_id,),
+        ).fetchone()[0] == 1
+        assert connection.execute(
+            "SELECT decision FROM quarantine_resolutions WHERE resolution_id=?",
+            (resolution_id,),
+        ).fetchone() == ("ABSENT",)
+    finally:
+        connection.close()
+
+    # A subsequent ambiguous send appends new evidence after the resolution;
+    # the durable fence becomes active again without replacing the first receipt.
+    next_receipt = {**receipt, "verification_status": "SENT_UNVERIFIED", "published_message_id": "1400", "confirmed": 0}
+    quarantine.quarantine_unknown(item_id, next_receipt, evidence={"item_state": "RECOVERY"})
+    assert quarantine.contains(item_id)
+    assert quarantine.unresolved_count() == 1
+    assert quarantine.quarantined_ids() == {item_id}
+
+
+@pytest.mark.parametrize(
+    "change, message",
+    [
+        ({"scan_complete": False}, "complete-topic-scan"),
+        ({"matched_message_ids": ["1401"]}, "live-candidate"),
+        ({"exact_receipt_status": "UNKNOWN"}, "receipt-not-absent"),
+        ({"topic_id": 1160}, "topic-mismatch"),
+    ],
+)
+def test_topic_absence_resolution_rejects_incomplete_or_mismatched_evidence(
+    tmp_path, change, message
+):
+    item_id = "-1003788989075_1040"
+    quarantine = PublicationQuarantine(tmp_path / "publication-quarantine.sqlite3")
+    quarantine.quarantine_unknown(
+        item_id,
+        {
+            "idempotency_key": f"armoredcreator:content:{item_id}",
+            "verification_status": "SENT_UNVERIFIED",
+            "published_message_id": "1339",
+            "confirmed": 1,
+            "destination_chat_id": "-1004341972306",
+            "destination_topic_id": 228,
+        },
+    )
+    evidence = {
+        "method": "telegram_topic_history_scan",
+        "checked_content_id": item_id,
+        "chat_id": "-1004341972306",
+        "topic_id": 228,
+        "scan_complete": True,
+        "scanned_message_ids": ["1363", "1360", "228"],
+        "checked_link_codes": ["5fpQxUgaIQ"],
+        "matched_message_ids": [],
+        "exact_receipt_id": "1339",
+        "exact_receipt_status": "ABSENT",
+        "operator_authorized": True,
+    }
+    evidence.update(change)
+    with pytest.raises((ValueError, RuntimeError), match=message):
+        quarantine.resolve_absent(item_id, evidence=evidence)
+    assert quarantine.contains(item_id)
+
+
+def test_reconciled_publication_receipt_is_archived_before_new_generation(tmp_path):
+    storage = Storage(tmp_path / "receipt-history")
+    db = Database(storage.database / "armoredcreator.db")
+    item_id = _approved(db, storage, "receipt-history", ambiguous=False)
+    db.publication_started(item_id, "-1004341972306", 228)
+    db.publication_message_sent(item_id, "1339")
+    db.conn.execute(
+        "UPDATE publications SET confirmed=1,verification_status='SENT_UNVERIFIED' "
+        "WHERE content_id=?", (item_id,),
+    )
+    db.conn.commit()
+    evidence = {
+        "method": "telegram_topic_history_scan",
+        "checked_content_id": item_id,
+        "chat_id": "-1004341972306",
+        "topic_id": 228,
+        "scan_complete": True,
+        "scanned_message_ids": ["1363", "1360", "228"],
+        "checked_link_codes": ["original-code", "affiliate-code"],
+        "matched_message_ids": [],
+        "operator_authorized": True,
+    }
+
+    key = db.archive_publication_after_absence_reconciliation(
+        item_id, resolution_id=17, evidence=evidence,
+    )
+
+    current = db.publication(item_id)
+    assert key == f"armoredcreator:content:{item_id}:reconciled:17"
+    assert current["idempotency_key"] == key
+    assert current["published_message_id"] is None
+    assert current["confirmed"] == 0
+    assert current["verification_status"] == "PENDING"
+    old = db.conn.execute(
+        "SELECT published_message_id,confirmed,verification_status,resolution_id "
+        "FROM publication_receipt_history WHERE content_id=?", (item_id,),
+    ).fetchone()
+    assert tuple(old) == ("1339", 1, "SENT_UNVERIFIED", 17)
+    assert db.archive_publication_after_absence_reconciliation(
+        item_id, resolution_id=17, evidence=evidence,
+    ) == key
+    assert db.conn.execute(
+        "SELECT COUNT(*) FROM publication_receipt_history WHERE content_id=?", (item_id,),
+    ).fetchone()[0] == 1
+    db.close()
+
+
 def test_startup_audit_fences_legacy_recovery_before_any_publication_check(tmp_path):
     storage = Storage(tmp_path / "legacy-project")
     db = Database(storage.database / "armoredcreator.db")
@@ -298,3 +447,104 @@ def test_quarantined_unknown_blocks_catchup_to_live_even_if_source_reports_compl
     assert coordinator.publication_quarantine.contains(item_id)
     assert db.get(item_id).state is State.RECOVERY
     coordinator.close()
+
+
+def test_startup_preserves_explicitly_reconciled_fresh_generation(tmp_path):
+    storage = Storage(tmp_path / "reconciled-startup")
+    db = Database(storage.database / "armoredcreator.db")
+    item_id = _approved(db, storage, "reconciled-startup", state=State.RECEIVED, ambiguous=True)
+    quarantine = PublicationQuarantine(storage.database / "publication-quarantine.sqlite3")
+    quarantine.quarantine_unknown(
+        item_id,
+        db.publication(item_id),
+        evidence={"item_state": "RECOVERY"},
+    )
+    evidence = {
+        "method": "telegram_topic_history_scan",
+        "checked_content_id": item_id,
+        "chat_id": "-1004341972306",
+        "topic_id": 228,
+        "scan_complete": True,
+        "scanned_message_ids": ["1363", "1360", "228"],
+        "scanned_message_count": 3,
+        "checked_link_codes": ["source-reconciled-startup", "affiliate-reconciled-startup"],
+        "matched_message_ids": [],
+        "exact_receipt_status": "NO_PRIOR_ID",
+        "operator_authorized": True,
+    }
+    resolution_id = quarantine.resolve_absent(item_id, evidence=evidence)
+    db.archive_publication_after_absence_reconciliation(
+        item_id, resolution_id=resolution_id, evidence=evidence,
+    )
+    db.transition(item_id, State.RECOVERY, "startup-publication-unknown-quarantined")
+
+    StartupReconciler(
+        db, storage, publisher=None, publication_quarantine=quarantine,
+    ).run()
+
+    assert db.is_reconciled_publication_generation(item_id)
+    assert not quarantine.contains(item_id)
+    assert db.get(item_id).state == State.RECEIVED
+    assert db.last_state_event(item_id)["reason"] == "startup-resume-explicitly-reconciled-absence-to-stock"
+    quarantine.close()
+    db.close()
+
+
+def test_recovery_reuses_completed_v5_result_after_explicit_absence(tmp_path):
+    from armored_core.recovery import Recovery
+
+    storage = Storage(tmp_path / "reconciled-v5-resume")
+    db = Database(storage.database / "armoredcreator.db")
+    item_id = _approved(db, storage, "reconciled-v5-resume", state=State.RECEIVED, ambiguous=True)
+    item = db.get(item_id)
+    result_path = storage.result(
+        item_id, item.affiliate_url, item.affiliate_name, source_id=item.source_id,
+    )
+    result_path.write_bytes(b"verified-v5-render")
+    db.set_result(item_id, result_path)
+    db.transition(item_id, State.PUBLISHING, "speech-studio-v5-complete")
+
+    quarantine = PublicationQuarantine(storage.database / "publication-quarantine.sqlite3")
+    quarantine.quarantine_unknown(item_id, db.publication(item_id), evidence={"item_state": "RECOVERY"})
+    evidence = {
+        "method": "telegram_topic_history_scan",
+        "checked_content_id": item_id,
+        "chat_id": "-1004341972306",
+        "topic_id": 228,
+        "scan_complete": True,
+        "scanned_message_ids": ["1363", "1360", "228"],
+        "scanned_message_count": 3,
+        "checked_link_codes": ["source-reconciled-v5", "affiliate-reconciled-v5"],
+        "matched_message_ids": [],
+        "exact_receipt_status": "NO_PRIOR_ID",
+        "operator_authorized": True,
+    }
+    resolution_id = quarantine.resolve_absent(item_id, evidence=evidence)
+    db.archive_publication_after_absence_reconciliation(
+        item_id, resolution_id=resolution_id, evidence=evidence,
+    )
+    db.publication_absent_confirmed(item_id)
+    db.transition(item_id, State.RECOVERY, "simulated-restart-after-explicit-absence")
+
+    calls = []
+    class Publisher:
+        def check_publication(self, _item):
+            calls.append("check")
+            raise AssertionError("an explicit absence and complete v5 result do not need another send check")
+    def speech_studio_runner(_item_id):
+        calls.append("render")
+
+    recovery = Recovery(
+        db, storage, vision=None, studio=None, publisher=Publisher(), ia=None,
+        speech_studio_runner=speech_studio_runner,
+        publication_quarantine=quarantine,
+    )
+    recovery.reconcile(item_id)
+
+    assert calls == []
+    assert db.get(item_id).state == State.PUBLISHING
+    assert db.get(item_id).result_path == result_path
+    assert db.has_speech_studio_v5_completion(item_id)
+    assert db.is_reconciled_publication_generation(item_id)
+    quarantine.close()
+    db.close()

@@ -16,6 +16,7 @@ def test_music_silence_noise_and_foreign_speech_are_not_rvc_eligible():
         (AudioClass.NOISE, None, False),
         (AudioClass.NO_AUDIO, None, False),
         (AudioClass.NO_USABLE_NARRATION, None, False),
+        (AudioClass.PT_BR_NARRATION_UNSUITABLE, "pt-br", True),
         (AudioClass.FOREIGN_SPEECH, "en", True),
         (AudioClass.UNKNOWN, None, False),
     ]:

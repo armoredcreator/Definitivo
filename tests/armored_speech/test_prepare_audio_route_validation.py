@@ -39,7 +39,7 @@ def test_route_manifest_selects_at_most_one_per_available_no_rvc_class(tmp_path,
     database = root / "speech.sqlite3"
     output = root / "storage" / "validation" / "routes.json"
     database.write_bytes(b"read-only test placeholder")
-    items = [_item(n) for n in range(1, 8)]
+    items = [_item(n) for n in range(1, 9)]
     source.write_text(json.dumps(_manifest(items)), encoding="utf-8")
     original_manifest_bytes = source.read_bytes()
     original_database_bytes = database.read_bytes()
@@ -52,6 +52,7 @@ def test_route_manifest_selects_at_most_one_per_available_no_rvc_class(tmp_path,
         "item-5": "NO_USABLE_NARRATION",
         "item-6": "FOREIGN_SPEECH",
         "item-7": "PT_BR_NARRATION_WITH_MUSIC",
+        "item-8": "PT_BR_NARRATION_UNSUITABLE",
     }
     monkeypatch.setattr(
         route_validation,
@@ -70,6 +71,7 @@ def test_route_manifest_selects_at_most_one_per_available_no_rvc_class(tmp_path,
     )
 
     assert [item["route_validation_audio_class"] for item in selected] == [
+        "PT_BR_NARRATION_UNSUITABLE",
         "MUSIC_ONLY",
         "NO_AUDIO",
         "NOISE",
@@ -77,9 +79,9 @@ def test_route_manifest_selects_at_most_one_per_available_no_rvc_class(tmp_path,
         "FOREIGN_SPEECH",
     ]
     assert [item["telegram_message_id"] for item in selected] == [
-        "item-1", "item-3", "item-4", "item-5", "item-6",
+        "item-8", "item-1", "item-3", "item-4", "item-5", "item-6",
     ]
-    assert len({item["content_id"] for item in selected}) == 5
+    assert len({item["content_id"] for item in selected}) == 6
     assert all("routecheck_20300101T010101Z_" in item["content_id"] for item in selected)
     assert missing == []
     assert counts["MUSIC_ONLY"] == 2
@@ -89,9 +91,9 @@ def test_route_manifest_selects_at_most_one_per_available_no_rvc_class(tmp_path,
     assert source.read_bytes() == original_manifest_bytes
     assert database.read_bytes() == original_database_bytes
     written = json.loads(output.read_text(encoding="utf-8"))
-    assert written["expected_item_count"] == 5
+    assert written["expected_item_count"] == 6
     assert written["batch_id"] == "audio-route-audit-20300101T010101Z"
-    assert len(written["items"]) == 5
+    assert len(written["items"]) == 6
 
 
 def test_route_manifest_reports_missing_classes_and_fails_on_existing_output(tmp_path, monkeypatch):
@@ -116,6 +118,7 @@ def test_route_manifest_reports_missing_classes_and_fails_on_existing_output(tmp
     )
     assert len(selected) == 1
     assert missing == [
+        "PT_BR_NARRATION_UNSUITABLE",
         "NO_AUDIO",
         "NOISE",
         "NO_USABLE_NARRATION",

@@ -91,13 +91,15 @@ class OllamaProvider:
 Escreva legendas editoriais curtas em português brasileiro para o produto já identificado
 pela Vision. Use somente fatos do contexto textual abaixo; não use imagens, não copie o
 título e não invente características, benefícios, aparência ou cenários. Sem anúncio,
-preço, urgência ou chamada de compra.
+preço, urgência, convite ou frase de ação como “leve essa” ou “garanta a sua”.
 
 O texto principal deve ter de 2 a 6 palavras, soar natural e comentar uma característica
 escrita no contexto. As hashtags identificam a categoria ou característica; use 1 ou 2
 relacionadas. Se usar outro substantivo de produto do título, deixe clara a comparação.
-Não gere emoji, marca, modelo, medida ou especificação técnica. Retorne somente o JSON
-solicitado; a Policy central verifica cada legenda.
+Não invente elogios nem adjetivos de avaliação (por exemplo, elegante, bonito ou confortável)
+se essas qualidades não estiverem escritas no contexto. Não transforme uma característica
+em benefício. Não gere emoji, marca, modelo, medida ou especificação técnica. Retorne somente
+o JSON solicitado; a Policy central verifica cada legenda.
 """.strip()
         policy_feedback = context.get("__policy_retry_feedback")
         if isinstance(policy_feedback, list) and policy_feedback:

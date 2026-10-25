@@ -38,6 +38,16 @@ class ModelProcessor:
             AudioMode.FOREIGN_SPEECH: AudioClass.FOREIGN_SPEECH,
         }
         audio_class = mode_map.get(result.mode)
+        rvc_gate = None
+        if audio_class in {AudioClass.PT_BR_NARRATION, AudioClass.PT_BR_NARRATION_WITH_MUSIC}:
+            maximum_rate = float(os.getenv("ARMORED_AUDIO_MAX_RVC_SPEECH_WPM", "230"))
+            measured_rate = result.speech_rate_wpm
+            if measured_rate is None:
+                audio_class = AudioClass.PT_BR_NARRATION_UNSUITABLE
+                rvc_gate = "SPEECH_RATE_UNVERIFIED"
+            elif measured_rate > maximum_rate:
+                audio_class = AudioClass.PT_BR_NARRATION_UNSUITABLE
+                rvc_gate = "SPEECH_RATE_TOO_FAST"
         speech_activity = result.speech_activity_ratio
         min_activity = float(os.getenv("ARMORED_AUDIO_VAD_MIN_ACTIVITY_RATIO", "0.08"))
 
@@ -84,7 +94,11 @@ class ModelProcessor:
             speech_detected=speech_detected,
             music_detected=music_detected,
             confidence=float(result.confidence),
-            rationale=json.dumps(result.as_dict(), ensure_ascii=False, sort_keys=True),
+            rationale=json.dumps(
+                {**result.as_dict(), **({"rvc_gate": rvc_gate} if rvc_gate else {})},
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
         )
         decision.validate()
         return decision

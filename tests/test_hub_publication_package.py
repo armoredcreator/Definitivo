@@ -29,6 +29,70 @@ def make_item(**kwargs):
 
 
 class HubPublicationPackageTests(unittest.TestCase):
+    @staticmethod
+    def _publishable_fixture(root, db):
+        from armored_core.services import SyncService
+        from armored_core.storage import Storage
+
+        storage = Storage(root)
+        source = root / "fixture-original.mp4"
+        source.write_bytes(b"fixture-original-video")
+        item_id = SyncService(db, storage).ingest(
+            source, "fixture", source_id="-1003788989075", topic_id=228,
+            original_url="https://s.shopee.com.br/original",
+        )
+        db.set_vision(
+            item_id, "radio automotivo", "https://s.shopee.com.br/affiliate",
+            ia_context={"productName": "radio automotivo"},
+            publication_caption="🧡 Radio bonito\n#radio",
+        )
+        item = db.get(item_id)
+        result = storage.result(item_id, "affiliate", "radio automotivo")
+        result.write_bytes(source.read_bytes())
+        db.set_result(item_id, result)
+        db.transition(item_id, State.PUBLISHING, "speech-studio-v5-complete")
+        return db.get(item_id)
+
+    def test_stale_confirmed_flag_does_not_skip_or_repeat_publication(self):
+        with TemporaryDirectory() as td:
+            db = Database(Path(td) / "armoredcreator.db")
+            try:
+                item = self._publishable_fixture(Path(td), db)
+                db.publication_started(item.item_id)
+                db.conn.execute(
+                    "UPDATE publications SET confirmed=1,verification_status='SENT_UNVERIFIED',"
+                    "published_message_id='1339' WHERE content_id=?",
+                    (item.item_id,),
+                )
+                db.conn.commit()
+                hub = ArmoredHub(Path(td), db)
+
+                with self.assertRaisesRegex(PublicationUnknownError, "inconsistente"):
+                    hub.publish(item)
+            finally:
+                db.close()
+
+    def test_only_fully_confirmed_receipt_is_returned_as_published(self):
+        with TemporaryDirectory() as td:
+            db = Database(Path(td) / "armoredcreator.db")
+            try:
+                item = self._publishable_fixture(Path(td), db)
+                db.publication_started(item.item_id)
+                db.conn.execute(
+                    "UPDATE publications SET confirmed=1,verification_status='CONFIRMED',"
+                    "published_message_id='1339' WHERE content_id=?",
+                    (item.item_id,),
+                )
+                db.conn.commit()
+                hub = ArmoredHub(Path(td), db)
+
+                result = hub.publish(item)
+
+                self.assertTrue(result.confirmed)
+                self.assertEqual(result.message_id, "1339")
+            finally:
+                db.close()
+
     def test_formats_caption_plus_all_links(self):
         item = make_item(
             affiliate_name="Decoração para casa",

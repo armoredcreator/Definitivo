@@ -181,7 +181,8 @@ def _validate_v1_directive(
     audio_class = str(payload.get("audio_class") or "")
     supported = {
         "PT_BR_NARRATION", "PT_BR_NARRATION_WITH_MUSIC", "MUSIC_ONLY",
-        "NO_AUDIO", "NOISE", "NO_USABLE_NARRATION", "FOREIGN_SPEECH",
+        "PT_BR_NARRATION_UNSUITABLE", "NO_AUDIO", "NOISE",
+        "NO_USABLE_NARRATION", "FOREIGN_SPEECH",
     }
     if audio_class not in supported:
         raise AudioPackageError(f"Unsupported audio class: {audio_class!r}")

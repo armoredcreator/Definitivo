@@ -11,6 +11,7 @@ SALES_WORDS = {
     "aproveite", "oferta", "ofertas", "promocao", "promoção", "desconto",
     "corra", "nao perca", "não perca",
 }
+SALES_PHRASES = {"leve essa", "leve esse", "leva essa", "leva esse"}
 # Broad Unicode emoji ranges plus legacy emoji-presentation symbols.
 # Also remove selectors, joiners, modifiers and keycap/tag components.
 EMOJI_RE = re.compile(
@@ -71,8 +72,7 @@ _NEUTRAL_REACTION_WORDS = {
     "curti", "gostei", "ate", "esse", "essa", "isso", "um", "uma", "o", "a", "pro", "pra",
 }
 _GENERATION_REACTION_WORDS = {
-    "parece", "olha", "olhe", "curti", "gostei", "bonito", "bonita",
-    "lindo", "linda", "charmoso", "charmosa", "elegante", "especial",
+    "parece", "olha", "olhe", "curti", "gostei",
 }
 _COMPARISON_MARKERS = {"parece", "tipo", "como", "lembra"}
 _COMPARATIVE_TITLE_NOUNS = {"apontador", "apontadores"}
@@ -100,6 +100,8 @@ _GENDERED_PRODUCT_NOUNS = {
     "cafe": ("m", "s"), "cafes": ("m", "p"),
     # "tênis" has the same written form in singular and plural.
     "tenis": ("m", None), "sapato": ("m", "s"), "sapatos": ("m", "p"),
+    "scarpin": ("m", "s"), "scarpins": ("m", "p"),
+    "smartwatch": ("m", "s"), "relogio": ("m", "s"),
     "radio": ("m", "s"), "radios": ("m", "p"),
     "sofa": ("m", "s"), "sofas": ("m", "p"),
     "organizador": ("m", "s"), "organizadores": ("m", "p"),
@@ -113,6 +115,8 @@ _KNOWN_PRODUCT_HEAD_TERMS = (
         | {
         "calcado", "calcados", "chinelo", "sandalia", "sapato", "tenis",
         "bota", "sapatilha", "roupa", "vestuario", "luz", "abajur",
+        "smartwatch", "relogio",
+        "scarpin", "scarpins",
         "luminaria", "lampada", "batom", "esmalte", "maquiagem",
         "cosmetico", "unha", "skincare", "utensilio", "panela",
         "frigideira", "talher", "mesa", "bancada", "escova", "escovas",
@@ -237,21 +241,21 @@ def _brand_model_tokens(context: dict[str, Any] | None) -> set[str]:
             token for token in _tokens(str(context.get("productName") or ""))
             if token not in PRODUCT_STOP_WORDS
         ]
+        known_category_types: set[str] = {
+            "calcado", "calcados", "chinelo", "sandalia", "sapato", "scarpin",
+            "smartwatch", "relogio",
+            "scarpins", "tenis", "bota", "sapatilha", "roupa", "vestuario",
+            "luz", "abajur", "luminaria", "lampada", "batom", "esmalte",
+            "maquiagem", "cosmetico", "unha", "skincare", "utensilio", "panela",
+            "frigideira", "talher", "organizador", "escova", "escovas",
+            "descascador", "descascadores", "calcinha", "calcinhas", "tanga",
+            "legumes", "multiuso", "almoco", "compartimento", "laser",
+            "esfoliante", "vestido", "poncho", "sutia", "moletom", "pijama",
+            "blusa", "blusas", "bandeja", "pincel", "pinceis",
+        }
         if len(title_tokens) >= 3:
             # Clear product nouns remain usable even in legacy rows whose
             # persisted context contains no structured category.
-            known_category_types: set[str] = {
-                "calcado", "calcados", "chinelo", "sandalia", "sapato",
-                "tenis", "bota", "sapatilha", "roupa", "vestuario",
-                "luz", "abajur", "luminaria", "lampada", "batom",
-                "esmalte", "maquiagem", "cosmetico", "unha", "skincare",
-                "utensilio", "panela", "frigideira", "talher", "organizador",
-                "escova", "escovas", "descascador", "descascadores",
-                "calcinha", "calcinhas", "tanga", "legumes", "multiuso",
-                "almoco", "compartimento", "laser",
-                "esfoliante", "vestido", "poncho", "sutia", "moletom",
-                "pijama", "blusa", "blusas", "bandeja", "pincel", "pinceis",
-            }
             # Older approved Vision rows may have only a product title and a
             # broad category. Recognize the category's product nouns before
             # applying the conservative first-two-token brand/model rule;
@@ -275,7 +279,10 @@ def _brand_model_tokens(context: dict[str, Any] | None) -> set[str]:
                 known_category_types.update({
                     "utensilio", "panela", "frigideira", "cozinha", "talher",
                 })
-            leaked.update(token for token in title_tokens[:2] if token not in known_category_types)
+            leaked.update(
+                token for token in title_tokens[:2]
+                if token not in known_category_types and token not in _KNOWN_PRODUCT_HEAD_TERMS
+            )
     return leaked
 
 
@@ -288,6 +295,9 @@ def _commercial_or_package_match(text: str) -> str | None:
         folded_word = _fold(word)
         if re.search(rf"(?<![a-z0-9]){re.escape(folded_word)}(?![a-z0-9])", folded):
             return f"linguagem comercial proibida: {word}"
+    for phrase in SALES_PHRASES:
+        if re.search(rf"(?<![a-z0-9]){re.escape(_fold(phrase))}(?![a-z0-9])", folded):
+            return f"chamada comercial proibida: {phrase}"
     return None
 
 
@@ -555,6 +565,61 @@ def _normalize_known_agreement(text: str) -> tuple[str, bool]:
     return corrected, True
 
 
+def _normalize_context_spelling(
+    text: str,
+    *,
+    product_name: str,
+    product_context: dict[str, Any] | None,
+) -> tuple[str, bool]:
+    """Restore accents from Vision's own spelling without adding new words."""
+    surfaces: dict[str, str] = {}
+    for value in (product_name, *(
+        str((product_context or {}).get(key) or "") for key in _CONTEXT_FIELDS
+    )):
+        for surface in WORD_RE.findall(str(value)):
+            surfaces.setdefault(_fold(surface), surface)
+    changed = False
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal changed
+        original = match.group(0)
+        # Vision titles often arrive without Portuguese diacritics. Preserve
+        # correctly accented words supplied by the caption composer instead
+        # of "correcting" them back to the marketplace's unaccented spelling.
+        if _fold(original) != original.casefold():
+            return original
+        canonical = surfaces.get(_fold(original))
+        if not canonical or canonical.casefold() == original.casefold():
+            return original
+        changed = True
+        if original.isupper():
+            return canonical.upper()
+        if original[:1].isupper():
+            return canonical[:1].upper() + canonical[1:]
+        return canonical
+
+    corrected = WORD_RE.sub(replace, text)
+    return corrected, changed
+
+
+def _normalize_sentence_case(text: str) -> tuple[str, bool]:
+    matches = list(WORD_RE.finditer(text))
+    replacements: list[tuple[int, int, str]] = []
+    for index, match in enumerate(matches):
+        original = match.group(0)
+        if index == 0 or (original.isupper() and len(original) <= 4):
+            continue
+        lower = original.lower()
+        if lower != original:
+            replacements.append((match.start(), match.end(), lower))
+    if not replacements:
+        return text, False
+    normalized = text
+    for start, end, replacement in reversed(replacements):
+        normalized = normalized[:start] + replacement + normalized[end:]
+    return normalized, True
+
+
 def hashtag_context_score(
     hashtag: str,
     *,
@@ -712,6 +777,16 @@ def normalize_caption(
     if without_emoji != main_without_heart:
         corrections.append("excess_emojis_removed")
     without_emoji = re.sub(r"\s+", " ", without_emoji).strip()
+    without_emoji, spelling_corrected = _normalize_context_spelling(
+        without_emoji,
+        product_name=product_name,
+        product_context=product_context,
+    )
+    if spelling_corrected:
+        corrections.append("vision_spelling_restored")
+    without_emoji, case_corrected = _normalize_sentence_case(without_emoji)
+    if case_corrected:
+        corrections.append("sentence_case_normalized")
     without_emoji, agreement_corrected = _normalize_known_agreement(without_emoji)
     if agreement_corrected:
         corrections.append("known_adjective_agreement_inflected")
@@ -787,6 +862,15 @@ def validate_caption(
     folded_words = [_fold(word) for word in words]
     if len(folded_words) != len(set(folded_words)):
         raise CaptionPolicyError("texto principal repete palavras")
+    glue_words = {
+        "a", "as", "ao", "aos", "com", "da", "das", "de", "do", "dos",
+        "e", "em", "para", "por", "pra", "pro", "um", "uma", "o", "os",
+    }
+    if (
+        any(left in glue_words and right in glue_words for left, right in zip(folded_words, folded_words[1:]))
+        or folded_words[-1] in {"com", "da", "das", "de", "do", "dos", "e", "em", "para", "por", "pra", "pro"}
+    ):
+        raise CaptionPolicyError("texto principal contém ligação gramatical quebrada")
     if not _main_phrase_is_contextual(
         words,
         product_name=product_name,

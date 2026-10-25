@@ -96,6 +96,25 @@ class StartupReconciler:
                     # reconciliation workflow may clear that ambiguity.
                     publication_check = "QUARANTINED"
                     pub_state = "QUARANTINED_UNKNOWN"
+                elif self.db.is_reconciled_publication_generation(item_id):
+                    # A complete topic-history scan archived the prior receipt
+                    # and opened this PENDING generation for a fresh run. Keep
+                    # that explicit decision stable across START_ALL restarts;
+                    # ordinary PENDING receipts remain quarantined below.
+                    publication_check = "ABSENT_RECONCILED"
+                    pub_state = "ABSENT_RECONCILED"
+                    item = self.db.get(item_id)
+                    event = self.db.last_state_event(item_id)
+                    if (
+                        item.state == State.RECOVERY
+                        and event is not None
+                        and str(event["reason"] or "") == "startup-publication-unknown-quarantined"
+                    ):
+                        self.db.transition(
+                            item_id,
+                            State.RECEIVED,
+                            "startup-resume-explicitly-reconciled-absence-to-stock",
+                        )
                 elif str(publication["verification_status"] or "").upper() in {
                     "PENDING", "SENT_UNVERIFIED", "UNKNOWN", "SENDING",
                 }:
