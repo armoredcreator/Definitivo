@@ -9,6 +9,7 @@ from typing import Any
 from ..providers.base import AIProvider, AIProviderError
 from ..providers.gemini import GeminiProvider
 from ..providers.ollama import OllamaProvider
+from .grounded import compose_grounded_caption, compose_safe_caption_fallback
 from .selector import (
     CaptionCandidateEvaluation,
     CaptionGenerationError,
@@ -53,6 +54,32 @@ class CaptionGenerator:
         if os.getenv("ARMORED_IA_CAPTION_ENABLED", "1") != "1":
             raise CaptionGenerationError("gerador de legenda desativado")
 
+        # A closed set of text-only patterns can express a few Vision facts
+        # reliably without a slow model call. All output still passes through
+        # the same selector and shared Policy as provider-generated captions.
+        grounded_caption = compose_grounded_caption(product_context)
+        if grounded_caption:
+            batch_id = uuid.uuid4().hex
+            evaluations = self.selector.evaluate(
+                [grounded_caption],
+                product_name=str(product_context.get("productName") or ""),
+                product_context=product_context,
+            )
+            try:
+                selection, marked = self.selector.choose(evaluations)
+            except CaptionGenerationError as exc:
+                raise CaptionGenerationError(
+                    str(exc), batch_id=batch_id, evaluations=evaluations,
+                    provider_requests=0,
+                ) from exc
+            return CaptionGenerationResult(
+                caption=selection.caption,
+                selection=selection,
+                evaluations=marked,
+                batch_id=batch_id,
+                provider_requests=0,
+            )
+
         provider_configuration = getattr(self.provider, "configuration", None)
         provider_name = ""
         if callable(provider_configuration):
@@ -65,6 +92,8 @@ class CaptionGenerator:
             if provider_name == "ollama"
             else "ARMORED_IA_MAX_CANDIDATES"
         )
+        # Low-resource Ollama models are slow on CPU; request one caption and
+        # let the shared Policy reject it instead of timing out on a large batch.
         default_candidate_limit = "1" if provider_name == "ollama" else "3"
         model_limit = max(1, int(os.getenv(candidate_setting, default_candidate_limit)))
         try:
@@ -103,6 +132,16 @@ class CaptionGenerator:
                 exc.request_count = max(0, int(getattr(self.provider, "last_request_count", 0) or 0))
                 exc.feedback_rounds = tuple(feedback_rounds)
                 exc.provider_attempts = tuple((*provider_attempts, *attempts))
+                fallback = self._safe_fallback_result(
+                    product_context,
+                    batch_id=batch_id,
+                    evaluations=all_evaluations,
+                    provider_requests=provider_requests + 1,
+                    feedback_rounds=feedback_rounds,
+                    provider_attempts=(*provider_attempts, *attempts),
+                )
+                if fallback is not None:
+                    return fallback
                 raise
             provider_requests += 1
             for receipt in getattr(self.provider, "last_attempts", ()) or ():
@@ -124,6 +163,16 @@ class CaptionGenerator:
                 all_evaluations.extend(indexed)
                 last_error = exc
                 if attempt >= policy_retries:
+                    fallback = self._safe_fallback_result(
+                        product_context,
+                        batch_id=batch_id,
+                        evaluations=all_evaluations,
+                        provider_requests=provider_requests,
+                        feedback_rounds=feedback_rounds,
+                        provider_attempts=provider_attempts,
+                    )
+                    if fallback is not None:
+                        return fallback
                     raise CaptionGenerationError(
                         str(exc), batch_id=batch_id, evaluations=tuple(all_evaluations),
                         provider_requests=provider_requests,
@@ -171,6 +220,48 @@ class CaptionGenerator:
         # The loop either returned a valid selection or raised with its evidence.
         raise last_error or CaptionGenerationError("caption-policy-retry-exhausted", batch_id=batch_id)
 
+    def _safe_fallback_result(
+        self,
+        product_context: dict[str, Any],
+        *,
+        batch_id: str,
+        evaluations: list[CaptionCandidateEvaluation],
+        provider_requests: int,
+        feedback_rounds: list[tuple[str, ...]],
+        provider_attempts: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    ) -> CaptionGenerationResult | None:
+        caption = compose_safe_caption_fallback(product_context)
+        if not caption:
+            return None
+        fallback_evaluations = self.selector.evaluate(
+            [caption],
+            product_name=str(product_context.get("productName") or ""),
+            product_context=product_context,
+        )
+        try:
+            selection, marked = self.selector.choose(fallback_evaluations)
+        except CaptionGenerationError:
+            return None
+        offset = len(evaluations)
+        selected_index = offset + selection.index
+        absolute_evaluations = tuple(
+            replace(
+                evaluation,
+                index=offset + evaluation.index,
+                selected=(offset + evaluation.index) == selected_index,
+            )
+            for evaluation in marked
+        )
+        return CaptionGenerationResult(
+            caption=selection.caption,
+            selection=replace(selection, index=selected_index),
+            evaluations=tuple((*evaluations, *absolute_evaluations)),
+            batch_id=batch_id,
+            provider_requests=provider_requests,
+            feedback_rounds=tuple(feedback_rounds),
+            provider_attempts=tuple(provider_attempts),
+        )
+
     @staticmethod
     def _feedback_guidance(
         reasons: tuple[str, ...],
@@ -180,8 +271,8 @@ class CaptionGenerator:
         """Turn Policy reasons into concise, actionable model feedback."""
         text = " ".join(reasons).casefold()
         guidance: list[str] = []
-        if "2 ou 3 palavras" in text or "palavras" in text:
-            guidance.append("Reescreva o texto principal com exatamente duas ou três palavras.")
+        if "palavras" in text:
+            guidance.append("Reescreva o texto principal com duas a seis palavras naturais.")
         if "concordância" in text:
             guidance.append(
                 "Faça o adjetivo concordar em gênero e número com o substantivo do produto."
@@ -201,6 +292,10 @@ class CaptionGenerator:
             guidance.append("Não use números, unidades, medidas ou especificações técnicas.")
         if "distintiva" in text or "produto" in text:
             guidance.append("Evite repetir sequências do título; expresse uma reação curta sem inventar benefícios.")
+        if "identificar a categoria" in text:
+            guidance.append("Identifique o produto no texto ou em uma hashtag; a frase pode comentar uma característica comprovada.")
+        if "substantivo secundário" in text:
+            guidance.append("Use substantivo secundário somente com comparação clara, como parece, tipo, como ou lembra.")
         if "vazia" in text or "nenhuma candidata" in text:
             guidance.append("Retorne opções não vazias no formato JSON solicitado.")
         if "sem suporte no contexto vision" in text:
@@ -242,18 +337,11 @@ class CaptionGenerator:
                     safe_terms.append(term)
             allowed = ", ".join(safe_terms[:12]) if safe_terms else "nenhum termo seguro disponível"
             guidance.append(
-                "O contexto Vision contém apenas o nome do produto: escolha duas ou três "
-                "palavras não técnicas que já apareçam nesse nome, sem marca/modelo e sem "
-                "usar os dois primeiros termos do título, que podem ser marca/linha/modelo; "
-                "não repita uma sequência consecutiva distintiva. Use somente as palavras "
-                "seguras listadas abaixo; combine palavras que não sejam adjacentes no título "
-                "para não copiar uma expressão do produto. Escolha uma hashtag de uma palavra "
-                "dessa mesma lista, sem repetir marca, linha, modelo ou medida. Palavras "
-                f"seguras posteriores do título: {allowed}. Para uma frase natural sem "
-                "atributos de uso comprovados, combine um termo seguro do produto com uma "
-                "reação estética neutra permitida pela Policy, como bonito/bonita, lindo/linda, "
-                "charmoso/charmosa, elegante ou especial. Não use alegações de desempenho "
-                "como potente, eficaz, ajustado ou equilibrado sem comprovação explícita."
+                "O contexto Vision contém apenas o nome do produto. Use uma característica "
+                "textual comprovada na frase principal e identifique a categoria nas hashtags "
+                "quando a frase não a nomear. Não invente aparência, benefícios, uso ou cenário. "
+                "Se usar outro substantivo de produto citado no título, expresse comparação "
+                f"clara. Fatos disponíveis no título: {allowed}."
             )
         return tuple(guidance)
 

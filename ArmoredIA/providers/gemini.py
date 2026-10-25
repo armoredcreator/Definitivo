@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import json
 import math
 import os
@@ -14,7 +13,6 @@ import requests
 from .base import AIProviderError
 from .context import context_text as _context_text
 from .transport import bounded_number, close_response, retryable_failure
-from ..caption.policy import caption_product_anchor_terms
 
 
 class GeminiProvider:
@@ -22,9 +20,8 @@ class GeminiProvider:
     def configuration() -> dict[str, str]:
         return {"provider": "gemini", "model": os.getenv("ARMORED_IA_MODEL", "gemini-3.1-flash-lite")}
 
-    def __init__(self, requester=None, image_getter=None, *, sleeper=None, clock=None, wall_clock=None):
+    def __init__(self, requester=None, *, sleeper=None, clock=None, wall_clock=None):
         self.requester = requester or requests.post
-        self.image_getter = image_getter or requests.get
         self.sleeper = sleeper or time.sleep
         self.clock = clock or time.monotonic
         self.wall_clock = wall_clock or time.time
@@ -123,7 +120,6 @@ class GeminiProvider:
         max_delay = self._number("ARMORED_IA_MAX_RETRY_DELAY", 30, 0, 60)
         total_timeout = self._number("ARMORED_IA_TOTAL_TIMEOUT", 180, 1, 600)
         api_timeout = self._number("ARMORED_IA_API_TIMEOUT", 90, 1, 120)
-        image_timeout = self._number("ARMORED_IA_IMAGE_TIMEOUT", 10, 1, 30)
         self.last_attempts = []
 
         model = self.configuration()["model"]
@@ -132,39 +128,32 @@ Você recebe contexto de um produto que JÁ FOI identificado pela Vision V1.
 A identidade da Vision V1 é a fonte de verdade. Você NÃO identifica, corrige,
 substitui ou renomeia o produto.
 
-Gere até 10 opções de reação curta, natural e específica para este item.
-Use categoria, uso, ambiente, estilo, aparência e demais sinais disponíveis.
-Evite frases coringa quando o contexto permitir algo melhor.
-Cada frase deve soar natural em português do Brasil e formar uma ideia coerente;
-não junte palavras desconexas nem inverta substantivo e qualificativo apenas para
-contornar uma sequência do título. Reordene termos somente quando a frase continuar
-natural e não alterar o sentido do produto.
+Gere até 10 opções editoriais curtas, naturais e específicas, como uma reação humana
+ao que a Vision identificou. Use somente os dados textuais estruturados abaixo; você
+não recebe nem deve inferir nada de imagens ou vídeos.
+Não copie o título nem transforme a frase em anúncio. Não invente atributos, benefícios
+ou cenários. A frase principal pode comentar uma característica textual; as hashtags
+podem identificar a categoria. Prefira uma reação conversacional que combine com o item
+atual. Não reutilize características, substantivos ou exemplos de outro produto.
 
 PARA CADA OPÇÃO:
 - Português do Brasil.
-- Exatamente 2 ou 3 palavras no texto principal; conectores curtos como "de", "para" e "tipo" podem deixar a frase natural.
+- De 2 a 6 palavras no texto principal; conectores curtos podem deixar a frase natural.
 - Não gere emoji; a política central aplica o emoji fixo.
 - Exatamente 1 ou 2 hashtags.
 - Hashtags devem estar comprovadas pelo nome, categoria, uso ou descrição persistidos; não use tags genéricas sem relação demonstrável.
-- Pelo menos uma palavra principal deve estar apoiada pelo contexto V1; toda palavra que sugira atributo ou benefício precisa de suporte explícito no contexto.
+- Pelo menos uma palavra principal deve estar apoiada pelo contexto textual da Vision.
+- Toda palavra que sugira característica ou resultado precisa de suporte explícito nesse contexto.
+- Não use adjetivos de aparência ou elogios ausentes dos dados textuais da Vision.
 - NÃO use embalagem, tampa, frasco ou lacre.
 - NÃO use linguagem de venda, urgência, promoção ou desconto.
 - NÃO escreva marca, modelo, quantidade, medida, pH, voltagem ou especificação técnica.
-- Preserve o substantivo principal. Uma frase curta que nomeie diretamente a categoria do produto é válida; não reproduza o título inteiro.
-- Se o título trouxer dois substantivos que descrevem o mesmo produto, conecte-os apenas de forma natural e apoiada pelo título, por exemplo "Descascador tipo apontador" para "Descascador de Legumes Apontador". Não substitua esses termos por forma, material ou benefício inventado.
+- Identifique o produto no texto principal ou nas hashtags. Um substantivo secundário do título exige comparação explícita ("parece", "tipo", "como", "lembra").
 - Não use hashtags para contornar as regras.
-- Uma palavra genérica da categoria é permitida.
 
 Retorne SOMENTE JSON:
 {"captions":["opção 1","opção 2","..."]}
 """.strip()
-        anchors = caption_product_anchor_terms(context)
-        if anchors:
-            prompt += (
-                "\nO texto principal deve usar ao menos um destes termos de identidade: "
-                + ", ".join(anchors)
-                + "."
-            )
         policy_feedback = context.get("__policy_retry_feedback")
         if isinstance(policy_feedback, list) and policy_feedback:
             reasons = "; ".join(str(value) for value in policy_feedback[:8])
@@ -172,7 +161,7 @@ Retorne SOMENTE JSON:
                 "\n\nFEEDBACK DA POLICY PARA A NOVA RODADA: a rodada anterior foi rejeitada. "
                 f"Rejeições e ações corretivas: {reasons}. Gere opções realmente diferentes "
                 "das rejeitadas, aplique cada ação ao texto e às hashtags, conte as palavras "
-                "do texto principal e use exatamente 2 ou 3. Garanta suporte Vision para cada atributo e pelo menos uma palavra principal contextual. Não acrescente subtítulo, emoji "
+                "do texto principal e use de 2 a 6. Garanta suporte Vision para cada característica e identifique o produto no texto ou nas hashtags. Não acrescente subtítulo, emoji "
                 "ou hashtag ao texto principal. Não invente características nem benefícios."
             )
         previous_candidates = context.get("__policy_retry_previous_candidates")
@@ -190,28 +179,6 @@ Retorne SOMENTE JSON:
                 + f"\nPúblico-alvo: {os.getenv('ARMORED_IA_AUDIENCE', 'público brasileiro de descoberta e lifestyle')}"
             )
         }]
-
-        image_url = str(context.get("imageUrl") or "").strip()
-        if image_url:
-            image = None
-            try:
-                image = self.image_getter(
-                    image_url,
-                    headers={"User-Agent": "Mozilla/5.0"},
-                    timeout=image_timeout,
-                )
-                image.raise_for_status()
-                mime = image.headers.get("Content-Type", "image/jpeg").split(";", 1)[0]
-                parts.append({
-                    "inline_data": {
-                        "mime_type": mime,
-                        "data": base64.b64encode(image.content).decode("ascii"),
-                    }
-                })
-            except requests.RequestException:
-                pass
-            finally:
-                self._close(image)
 
         deadline = self.clock() + total_timeout
 

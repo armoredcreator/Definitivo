@@ -34,8 +34,9 @@ HASHTAG_RE = re.compile(r"(?<!\w)#([\wÀ-ÿ]+)", re.UNICODE)
 WORD_RE = re.compile(r"[A-Za-zÀ-ÿ0-9]+(?:['-][A-Za-zÀ-ÿ0-9]+)?", re.UNICODE)
 PRODUCT_STOP_WORDS = {
     "a", "as", "ao", "aos", "com", "da", "das", "de", "do", "dos", "e",
-    "em", "para", "por", "sem", "um", "uma", "kit", "conjunto",
-    "original", "novo", "nova", "olha", "esse", "essa", "isso",
+    "em", "para", "por", "pro", "pra", "sem", "um", "uma", "o", "os",
+    "kit", "conjunto", "original", "novo", "nova", "olha", "olhe",
+    "esse", "essa", "isso", "ate",
     # Generic marketplace placeholders do not identify a product category.
     "produto", "produtos", "tipo",
 }
@@ -65,13 +66,16 @@ _GENERIC_HASHTAGS = {
 }
 _NEUTRAL_REACTION_WORDS = {
     "beleza", "bonito", "bonita", "lindo", "linda", "charme", "charmoso",
-    "charmosa", "elegante", "visual", "estilo",
-    "look", "cantinho", "canto", "olhar", "detalhe", "especial",
+    "charmosa", "elegante", "visual", "estilo", "look", "cantinho", "canto",
+    "olhar", "detalhe", "especial", "parece", "parecem", "olha", "olhe",
+    "curti", "gostei", "ate", "esse", "essa", "isso", "um", "uma", "o", "a", "pro", "pra",
 }
 _GENERATION_REACTION_WORDS = {
-    "bonito", "bonita", "lindo", "linda", "charmoso", "charmosa",
-    "elegante", "especial",
+    "parece", "olha", "olhe", "curti", "gostei", "bonito", "bonita",
+    "lindo", "linda", "charmoso", "charmosa", "elegante", "especial",
 }
+_COMPARISON_MARKERS = {"parece", "tipo", "como", "lembra"}
+_COMPARATIVE_TITLE_NOUNS = {"apontador", "apontadores"}
 # Product nouns and the short reaction adjectives exposed to Ollama. The
 # caption has only two or three words, so a small morphology check catches
 # high-impact agreement errors without pretending to be a full Portuguese
@@ -111,6 +115,8 @@ _KNOWN_PRODUCT_HEAD_TERMS = (
         "cosmetico", "unha", "skincare", "utensilio", "panela",
         "frigideira", "talher", "mesa", "bancada", "escova", "escovas",
         "descascador", "descascadores", "calcinhas", "calcinha", "tanga",
+        "esfoliante", "vestido", "poncho", "sutia", "moletom", "pijama",
+        "blusa", "blusas", "bandeja", "pincel", "pinceis",
         }
     )
     - {"apontador", "apontadores"}
@@ -235,6 +241,9 @@ def _brand_model_tokens(context: dict[str, Any] | None) -> set[str]:
                 "utensilio", "panela", "frigideira", "talher", "organizador",
                 "escova", "escovas", "descascador", "descascadores",
                 "calcinha", "calcinhas", "tanga", "legumes", "multiuso",
+                "almoco", "compartimento", "laser",
+                "esfoliante", "vestido", "poncho", "sutia", "moletom",
+                "pijama", "blusa", "blusas", "bandeja", "pincel", "pinceis",
             }
             # Older approved Vision rows may have only a product title and a
             # broad category. Recognize the category's product nouns before
@@ -356,6 +365,56 @@ def _main_phrase_has_product_anchor(
         _fold(word) in expanded or stem(_fold(word)) in expanded_stems
         for word in words
     )
+
+
+def _hashtags_have_product_anchor(
+    hashtags: list[str],
+    *,
+    product_name: str,
+    product_context: dict[str, Any] | None,
+) -> bool:
+    anchors = {
+        _fold(term)
+        for term in caption_product_anchor_terms(
+            product_context, product_name=product_name,
+        )
+    }
+    if not anchors:
+        return True
+    for raw_tag in hashtags:
+        tag = _fold(raw_tag)
+        if tag in anchors:
+            return True
+        aliases = _HASHTAG_CONTEXT_ALIASES.get(tag)
+        if not aliases and tag.endswith("s"):
+            aliases = _HASHTAG_CONTEXT_ALIASES.get(tag[:-1])
+        if aliases and aliases & anchors:
+            return True
+    return False
+
+
+def _secondary_product_noun_is_comparative(
+    words: list[str],
+    *,
+    product_name: str,
+    product_context: dict[str, Any] | None,
+) -> bool:
+    """Require an explicit comparison before using a secondary product noun."""
+    title_nouns = set(_tokens(product_name)) & _COMPARATIVE_TITLE_NOUNS
+    primary = set()
+    for token in _tokens(product_name):
+        if token in _KNOWN_PRODUCT_HEAD_TERMS or token in _GENDERED_PRODUCT_NOUNS:
+            primary.add(token)
+            break
+    secondary = title_nouns - primary
+    caption_nouns = {_fold(word) for word in words} & secondary
+    if not caption_nouns:
+        return True
+    for noun in caption_nouns:
+        noun_index = next(index for index, word in enumerate(words) if _fold(word) == noun)
+        if not any(_fold(word) in _COMPARISON_MARKERS for word in words[:noun_index]):
+            return False
+    return True
 
 
 def _main_phrase_is_contextual(
@@ -540,7 +599,8 @@ def caption_generation_vocabulary(
 
     text_words: list[str] = []
     seen_text: set[str] = set()
-    for surface in (*grounded.values(), "de", "da", "do", "para", "com", "em", *_GENERATION_REACTION_WORDS):
+    safe_glue = ("de", "da", "do", "para", "com", "em", "a", "o", "um", "uma", "até", "esse", "essa", "pro", "pra")
+    for surface in (*grounded.values(), *safe_glue, *_GENERATION_REACTION_WORDS):
         folded = _fold(surface)
         if folded not in seen_text:
             seen_text.add(folded)
@@ -704,8 +764,8 @@ def validate_caption(
     main_text = HASHTAG_RE.sub("", text)
     main = main_text.strip()
     words = WORD_RE.findall(main.replace("🧡", ""))
-    if not 2 <= len(words) <= 3:
-        raise CaptionPolicyError("texto principal deve conter 2 ou 3 palavras")
+    if not 2 <= len(words) <= 6:
+        raise CaptionPolicyError("texto principal deve conter de 2 a 6 palavras")
     folded_words = [_fold(word) for word in words]
     if len(folded_words) != len(set(folded_words)):
         raise CaptionPolicyError("texto principal repete palavras")
@@ -715,16 +775,24 @@ def validate_caption(
         product_context=product_context,
     ):
         raise CaptionPolicyError("texto principal contém termo sem suporte no contexto Vision")
-    if not _main_phrase_has_product_anchor(
-        words,
-        product_name=product_name,
-        product_context=product_context,
-    ):
+    main_has_anchor = _main_phrase_has_product_anchor(
+        words, product_name=product_name, product_context=product_context,
+    )
+    hashtags_have_anchor = _hashtags_have_product_anchor(
+        hashtags, product_name=product_name, product_context=product_context,
+    )
+    if not main_has_anchor and not hashtags_have_anchor:
         raise CaptionPolicyError(
-            "texto principal não identifica a categoria ou o substantivo principal do produto"
+            "legenda precisa identificar a categoria ou substantivo principal no texto ou nas hashtags"
         )
     if _has_unlinked_product_nouns(words):
         raise CaptionPolicyError("texto principal combina substantivos de produto sem ligação natural")
+    if not _secondary_product_noun_is_comparative(
+        words, product_name=product_name, product_context=product_context,
+    ):
+        raise CaptionPolicyError(
+            "substantivo secundário do título sem ligação natural; use comparação explícita"
+        )
     if _has_unnatural_bag_device_relation(words):
         raise CaptionPolicyError(
             "relação pouco natural: bolsa para computador descreve finalidade; não use bolsa de computador"

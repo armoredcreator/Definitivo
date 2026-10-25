@@ -69,10 +69,14 @@ class OllamaProvider:
     def _schema_word_variants(words: tuple[str, ...]) -> str:
         variants: set[str] = set()
         for word in words:
-            forms = {str(word), str(word).lower(), str(word).capitalize()}
-            for form in forms:
-                variants.add(form)
-        return "|".join(re.escape(value) for value in sorted(variants, key=str.casefold))
+            value = str(word).strip()
+            if not value:
+                continue
+            variants.update((value, value.lower(), value.capitalize()))
+        return "|".join(
+            re.escape(value)
+            for value in sorted(variants, key=lambda item: (-len(item), item.casefold()))
+        )
 
     def generate_candidates(self, task: str, context: dict[str, Any], limit: int) -> list[str]:
         if task != "caption":
@@ -84,41 +88,16 @@ class OllamaProvider:
             raise AIProviderError("ARMORED_IA_OLLAMA_MODEL está vazio")
 
         prompt = """
-Você recebe contexto de um produto que JÁ FOI identificado pela Vision V1.
-A identidade da Vision V1 é a fonte de verdade. Você NÃO identifica, corrige,
-substitui ou renomeia o produto.
+Escreva legendas editoriais curtas em português brasileiro para o produto já identificado
+pela Vision. Use somente fatos do contexto textual abaixo; não use imagens, não copie o
+título e não invente características, benefícios, aparência ou cenários. Sem anúncio,
+preço, urgência ou chamada de compra.
 
-Gere opções de reação curta, natural e específica para este item.
-Use categoria, uso, ambiente, estilo, aparência e demais sinais disponíveis.
-Evite frases coringa quando o contexto permitir algo melhor.
-Cada frase deve soar natural em português do Brasil e formar uma ideia coerente;
-não junte palavras desconexas nem inverta substantivo e qualificativo apenas para
-contornar uma sequência do título. Reordene termos somente quando a frase continuar
-natural e não alterar o sentido do produto.
-
-PARA CADA OPÇÃO:
-- Português do Brasil.
-- Exatamente 2 ou 3 palavras no texto principal; conectores curtos como "de", "para" e "tipo" podem deixar a frase natural.
-- Não repita nenhuma palavra no texto principal; a frase precisa ser uma expressão natural, não o nome repetido do produto.
-- NÃO inclua emoji; a política do código acrescenta sempre o coração laranja fixo 🧡.
-- Exatamente 1 ou 2 hashtags.
-- Hashtags devem estar comprovadas pelo nome, categoria, uso ou descrição persistidos; não use tags genéricas sem relação demonstrável.
-- Pelo menos uma palavra principal deve estar apoiada pelo contexto V1; toda palavra que sugira atributo ou benefício precisa de suporte explícito no contexto.
-- Quando o contexto não tiver descrição ou uso detalhado, a frase principal DEVE nomear o produto pela categoria ou pelo primeiro substantivo significativo do título. Não use apenas material, cor, marca, modelo ou reação genérica.
-- Não troque o substantivo principal por outro substantivo que apenas apareça no título; por exemplo, para "escovas de aço", não escreva uma legenda sobre "latão".
-- NÃO use embalagem, tampa, frasco ou lacre.
-- NÃO use linguagem de venda, urgência, promoção ou desconto.
-- NÃO escreva marca, modelo, quantidade, medida, pH, voltagem ou especificação técnica.
-- Preserve o substantivo principal. Uma frase curta que nomeie diretamente a categoria do produto é válida; não reproduza o título inteiro.
-- Use preposições que expressem a relação correta em português do Brasil: para finalidade ou transporte ("bolsa para computador"), de para composição/posse quando fizer sentido. Nunca forme "bolsa de computador".
-- Se o título trouxer dois substantivos que descrevem o mesmo produto, conecte-os apenas de forma natural e apoiada pelo título, por exemplo "Descascador tipo apontador" para "Descascador de Legumes Apontador". Não substitua esses termos por forma, material ou benefício inventado.
-- Não use hashtags para contornar as regras.
-- Uma palavra genérica da categoria é permitida.
-- Faça concordância natural de gênero e número: o adjetivo deve concordar com o substantivo que descreve.
-- Se usar "máscara", prefira uma forma feminina como "bonita"; não escreva "máscara delicado".
-- Se não houver atributo comprovado, use uma reação neutra e concordante; não transforme o nome em alegação de resultado.
-
-Retorne SOMENTE um objeto JSON válido com a chave "captions". Cada item é um objeto com "text" (apenas 2 ou 3 palavras, sem emoji e sem hashtag) e "hashtags" (lista obrigatória de 1 ou 2 hashtags começando com #). Gere você mesmo o texto e as hashtags; não deixe campos vazios.
+O texto principal deve ter de 2 a 6 palavras, soar natural e comentar uma característica
+escrita no contexto. As hashtags identificam a categoria ou característica; use 1 ou 2
+relacionadas. Se usar outro substantivo de produto do título, deixe clara a comparação.
+Não gere emoji, marca, modelo, medida ou especificação técnica. Retorne somente o JSON
+solicitado; a Policy central verifica cada legenda.
 """.strip()
         policy_feedback = context.get("__policy_retry_feedback")
         if isinstance(policy_feedback, list) and policy_feedback:
@@ -127,7 +106,7 @@ Retorne SOMENTE um objeto JSON válido com a chave "captions". Cada item é um o
                 "\n\nFEEDBACK DA POLICY PARA A NOVA RODADA: a rodada anterior foi rejeitada. "
                 f"Rejeições e ações corretivas: {reasons}. Gere opções realmente diferentes "
                 "das rejeitadas e aplique cada ação. Conte as palavras do campo text e use "
-                "exatamente 2 ou 3; garanta suporte Vision para cada atributo e pelo menos uma palavra principal contextual; não coloque subtítulo, emoji ou hashtag nesse campo. "
+                "de 2 a 6; garanta suporte Vision para cada característica e identifique o produto no texto ou nas hashtags; não coloque subtítulo, emoji ou hashtag nesse campo. "
                 "Use hashtags demonstravelmente relacionadas ao contexto e não invente fatos."
             )
         previous_candidates = context.get("__policy_retry_previous_candidates")
@@ -144,12 +123,12 @@ Retorne SOMENTE um objeto JSON válido com a chave "captions". Cada item é um o
         )
 
         grounded_text_words, grounded_hashtags = caption_generation_vocabulary(context)
-        product_anchors = caption_product_anchor_terms(context)
-        if product_anchors:
+        product_heads = caption_product_anchor_terms(context)
+        if product_heads:
             prompt += (
-                "\nTermo(s) de identidade obrigatórios para aparecer no texto principal: "
-                + ", ".join(product_anchors)
-                + ". Use pelo menos um deles ou uma flexão natural; não publique uma frase sem o tipo de produto."
+                "\nCategoria/substantivo principal identificado pela Vision: "
+                + product_heads[0]
+                + ". Pode aparecer no texto se a frase ficar natural; não copie o título."
             )
         rejected_title_terms: set[str] = set()
         title_tokens = [
@@ -186,34 +165,21 @@ Retorne SOMENTE um objeto JSON válido com a chave "captions". Cada item é um o
                 ) not in rejected_title_terms
             )
             prompt += "\nTermos bloqueados após rejeição da Policy (não use no texto nem hashtags): " + ", ".join(sorted(rejected_title_terms))
-        if grounded_text_words:
-            prompt += "\nPalavras permitidas no campo text: " + ", ".join(grounded_text_words)
-            prompt += ". Use apenas palavras dessa lista, mantenha concordância natural e não transforme reação em benefício; a validação final continua obrigatória."
         if grounded_hashtags:
-            prompt += "\nHashtags permitidas: " + ", ".join(f"#{tag}" for tag in grounded_hashtags)
-            prompt += ". Use somente hashtags dessa lista."
+            prompt += "\nHashtags confirmadas no contexto: " + ", ".join(f"#{tag}" for tag in grounded_hashtags[:12])
+            prompt += ". Prefira uma ou duas dessas; a Policy central valida a relação."
+        allowed_text_words = tuple(dict.fromkeys((*grounded_text_words, *product_heads)))
+        allowed_word_pattern = self._schema_word_variants(allowed_text_words)
         text_pattern = (
-            "^[A-Za-zÀ-ÿ]+(?:[-'][A-Za-zÀ-ÿ]+)*(?: [A-Za-zÀ-ÿ]+(?:[-'][A-Za-zÀ-ÿ]+)*){1,2}[.!?]?$"
+            rf"^(?:{allowed_word_pattern})(?: (?:{allowed_word_pattern})){{1,5}}[.!?]?$"
+            if allowed_word_pattern
+            else "^[A-Za-zÀ-ÿ]+(?:[-'][A-Za-zÀ-ÿ]+)*(?: [A-Za-zÀ-ÿ]+(?:[-'][A-Za-zÀ-ÿ]+)*){1,5}[.!?]?$"
         )
         hashtag_pattern = "^#[A-Za-zÀ-ÿ0-9_]+$"
-        if grounded_text_words:
-            allowed_words = self._schema_word_variants(grounded_text_words)
-            if product_anchors:
-                # The shared Policy requires the product category/head noun in
-                # sparse Vision records. Put that invariant into the local
-                # model's constrained-output schema as well: asking a small
-                # CPU model to remember an anchor from a noisy marketplace
-                # title is not reliable enough on its own.
-                required_anchors = self._schema_word_variants(product_anchors)
-                text_pattern = (
-                    rf"^(?:{required_anchors})(?: (?:{allowed_words})){{1,2}}[.!?]?$"
-                )
-            else:
-                text_pattern = rf"^(?:{allowed_words})(?: (?:{allowed_words})){{1,2}}[.!?]?$"
-        if grounded_hashtags:
-            allowed_tags = self._schema_word_variants(grounded_hashtags)
-            hashtag_pattern = rf"^#(?:{allowed_tags})$"
-
+        allowed_hashtags = tuple(dict.fromkeys((*grounded_hashtags, *product_heads)))
+        hashtag_words_pattern = self._schema_word_variants(allowed_hashtags)
+        if hashtag_words_pattern:
+            hashtag_pattern = rf"^#(?:{hashtag_words_pattern})$"
         schema = {
             "type": "object",
             "properties": {
@@ -260,7 +226,7 @@ Retorne SOMENTE um objeto JSON válido com a chave "captions". Cada item é um o
         attempts = int(attempts_value)
         retry_delay = bounded_number("ARMORED_IA_RETRY_DELAY", 2, 0, 60)
         timeout = bounded_number("ARMORED_IA_OLLAMA_TIMEOUT", 90, 1, 600)
-        max_tokens = bounded_number("ARMORED_IA_OLLAMA_MAX_TOKENS", 256, 64, 4096)
+        max_tokens = bounded_number("ARMORED_IA_OLLAMA_MAX_TOKENS", 96, 64, 4096)
         temperature = bounded_number("ARMORED_IA_OLLAMA_TEMPERATURE", 0.2, 0, 2)
         if not max_tokens.is_integer():
             raise AIProviderError("ARMORED_IA_OLLAMA_MAX_TOKENS deve ser inteiro")

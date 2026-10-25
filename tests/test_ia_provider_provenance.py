@@ -61,11 +61,47 @@ def test_selected_provider_is_persisted_without_automatic_switch(tmp_path, monke
         assert receipt["provider"] == provider
         assert receipt["model"] == f"synthetic-{provider}-model"
         assert receipt["status"] == ("FAILED" if failed else "COMPLETE")
-        assert receipt["request_count"] == (1 if provider == "ollama" else 0)
+        assert receipt["request_count"] == 1
         assert calls == [provider]
         assert db.publication(item_id) is None
         trace = storage.root / "storage" / "logs" / "pipeline_trace.jsonl"
         records = [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()]
         assert any(row.get("event") == "CONFIGURED" and row.get("provider") == provider for row in records)
+    finally:
+        coordinator.close()
+
+
+def test_policy_retry_request_count_includes_every_ollama_generation_round(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARMORED_IA_PROVIDER", "ollama")
+    monkeypatch.setenv("ARMORED_IA_OLLAMA_MODEL", "synthetic-ollama-model")
+    monkeypatch.setenv("ARMORED_IA_MAX_ATTEMPTS", "1")
+    monkeypatch.setenv("ARMORED_IA_POLICY_RETRIES", "1")
+    monkeypatch.setenv("ARMORED_IA_CAPTION_ENABLED", "1")
+    storage = Storage(tmp_path)
+    db = Database(storage.database / "test.sqlite3")
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"synthetic original")
+    item_id = SyncService(db, storage).ingest(source, "2", source_id="synthetic")
+    context = {"productName": "Esfoliante Corporal Hidratante Banho Estrias 150g Cicatribem"}
+    db.set_vision(item_id, context["productName"], "https://affiliate.invalid/example", ia_context=context)
+    ia = ArmoredIA()
+    calls = []
+    body = {"response": json.dumps({"captions": [
+        {"text": "Hidratante para o banho", "hashtags": ["#hidratante", "#banho"]}
+    ]})}
+    ia.caption_generator.provider.requester = lambda *_args, **_kwargs: (
+        calls.append("request") or Response(body)
+    )
+    coordinator = Coordinator(db, storage, None, None, None, ia=ia)
+    try:
+        coordinator.pipeline.run(item_id, stop_after_ia=True)
+        receipt = db.conn.execute(
+            "SELECT status,request_count FROM ia_generation_attempts WHERE content_id=?",
+            (item_id,),
+        ).fetchone()
+        assert db.get(item_id).publication_caption == "🧡 Esfoliante para banho\n#esfoliante #banho"
+        assert receipt["status"] == "COMPLETE"
+        assert receipt["request_count"] == 2
+        assert len(calls) == 2
     finally:
         coordinator.close()

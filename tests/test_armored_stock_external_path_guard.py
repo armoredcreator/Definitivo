@@ -165,6 +165,51 @@ def test_stock_copies_trusted_legacy_original_and_preserves_source(tmp_path, mon
     assert db.repaired_paths == [canonical]
 
 
+def test_stock_relocates_trusted_legacy_original_for_recovery_state(tmp_path, monkeypatch):
+    project_root = tmp_path / "Definitivo"
+    legacy_root = tmp_path / "ArmoredCreator-final" / "storage"
+    legacy_original = legacy_root / "Videos GRUPO_FONTE_1" / "299_original.mp4"
+    legacy_original.parent.mkdir(parents=True)
+    legacy_original.write_bytes(b"immutable-recovery-original")
+    source_hash = _sha256(legacy_original)
+    monkeypatch.setenv("ARMORED_LEGACY_MEDIA_ROOT", str(legacy_root))
+
+    storage = Storage(project_root)
+    item = _item(legacy_original)
+    item.state = State.SPEECH
+    item.original_sha256 = source_hash
+    db = FakeDatabase(item)
+    coordinator = SimpleNamespace(storage=storage, db=db, source=None)
+
+    canonical = ArmoredStock(coordinator).relocate_trusted_legacy_original(item)
+
+    assert canonical == storage.original(
+        item.content_id, ".mp4", original_url=item.original_url, source_id=item.source_id
+    ).resolve()
+    assert item.original_path == canonical
+    assert canonical.is_file()
+    assert _sha256(canonical) == source_hash
+    assert legacy_original.is_file()
+    assert _sha256(legacy_original) == source_hash
+    assert db.repaired_paths == [canonical]
+
+
+def test_stock_recovery_relocation_refuses_untrusted_or_changed_legacy_original(tmp_path, monkeypatch):
+    project_root = tmp_path / "Definitivo"
+    trusted_root = tmp_path / "ArmoredCreator-final" / "storage"
+    trusted_root.mkdir(parents=True)
+    untrusted = tmp_path / "other" / "original.mp4"
+    untrusted.parent.mkdir(parents=True)
+    untrusted.write_bytes(b"untrusted-original")
+    monkeypatch.setenv("ARMORED_LEGACY_MEDIA_ROOT", str(trusted_root))
+    storage = Storage(project_root)
+    item = _item(untrusted)
+    coordinator = SimpleNamespace(storage=storage, db=FakeDatabase(item), source=None)
+    with pytest.raises(RuntimeError, match="outside-trusted-legacy-root"):
+        ArmoredStock(coordinator).relocate_trusted_legacy_original(item)
+    assert untrusted.is_file()
+
+
 def test_stock_blocks_changed_canonical_original_without_overwriting(tmp_path):
     storage = Storage(tmp_path)
     item = _item(tmp_path / "placeholder.mp4")

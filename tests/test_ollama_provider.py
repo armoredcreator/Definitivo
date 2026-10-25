@@ -101,12 +101,13 @@ def test_ollama_generator_defaults_to_one_grounded_candidate(monkeypatch):
     assert result.caption == "🧡 Chinelo casual\n#chinelo"
     captions_schema = calls[0]["format"]["properties"]["captions"]
     assert captions_schema["minItems"] == 1
+    assert captions_schema["maxItems"] == 1
     assert "Gere EXATAMENTE 1 opções distintas" in calls[0]["prompt"]
     text_pattern = captions_schema["items"]["properties"]["text"]["pattern"]
     hashtag_pattern = captions_schema["items"]["properties"]["hashtags"]["items"]["pattern"]
     import re
     assert re.fullmatch(text_pattern, "Chinelo charmoso.")
-    assert not re.fullmatch(text_pattern, "Chinelo charmoso para o dia a dia.")
+    assert re.fullmatch(text_pattern, "Chinelo com detalhe em strass.")
     assert re.fullmatch(hashtag_pattern, "#chinelo")
     assert not re.fullmatch(hashtag_pattern, "#viral")
 
@@ -162,12 +163,11 @@ def test_ollama_policy_feedback_excludes_rejected_title_phrase_on_retry(monkeypa
     assert result.caption == "🧡 Menina bonita\n#menina"
     assert len(calls) == 2
     assert "alca, fina" in calls[1]["prompt"] or "fina, alca" in calls[1]["prompt"]
-    text_pattern = calls[1]["format"]["properties"]["captions"]["items"]["properties"]["text"]["pattern"]
-    assert "alca" not in text_pattern.casefold()
-    assert "fina" not in text_pattern.casefold()
+    assert "Termos bloqueados após rejeição da Policy" in calls[1]["prompt"]
+    assert "alca, fina" in calls[1]["prompt"] or "fina, alca" in calls[1]["prompt"]
 
 
-def test_ollama_schema_requires_product_head_first_for_noisy_sparse_titles(monkeypatch):
+def test_ollama_schema_requires_product_head_without_forcing_it_first(monkeypatch):
     import json as json_module
     import re
 
@@ -188,8 +188,11 @@ def test_ollama_schema_requires_product_head_first_for_noisy_sparse_titles(monke
 
     text_pattern = calls[0]["format"]["properties"]["captions"]["items"]["properties"]["text"]["pattern"]
     assert re.fullmatch(text_pattern, "Bolsa bonita")
-    assert not re.fullmatch(text_pattern, "Acolchoado elegante para")
-    assert "Termo(s) de identidade obrigatórios" in calls[0]["prompt"]
+    assert re.fullmatch(text_pattern, "Bolsa para computador")
+    assert not re.fullmatch(text_pattern, "Hidratação completa para o corpo")
+    assert not re.fullmatch(text_pattern, "Acolchoado elegante para notebook e bolsa extra")
+    assert "Categoria/substantivo principal identificado pela Vision: bolsa" in calls[0]["prompt"]
+    assert "Pode aparecer no texto se a frase ficar natural" in calls[0]["prompt"]
 
 
 def test_structured_model_fields_keep_hashtags_without_inventing_content():
@@ -283,3 +286,34 @@ def test_ollama_forwards_explicit_thinking_mode(monkeypatch):
 
     OllamaProvider(requester=requester).generate_candidates("caption", {}, 1)
     assert calls[0]["think"] is False
+
+
+def test_ollama_caption_generator_can_rank_three_candidates_when_configured(monkeypatch):
+    import json as json_module
+
+    from ArmoredIA.caption.generator import CaptionGenerator
+
+    monkeypatch.setenv("ARMORED_IA_PROVIDER", "ollama")
+    monkeypatch.setenv("ARMORED_IA_OLLAMA_MAX_CANDIDATES", "3")
+    monkeypatch.delenv("ARMORED_IA_MAX_CANDIDATES", raising=False)
+    calls = []
+
+    def requester(_url, *, json, timeout):
+        calls.append(json)
+        return _Response({"response": json_module.dumps({"captions": [
+            {"text": "Bolsa elegante", "hashtags": ["#bolsa"]},
+            {"text": "Elegante bolsa", "hashtags": ["#bolsa"]},
+            {"text": "Bolsa de computador", "hashtags": ["#bolsa"]},
+        ]})})
+
+    generator = CaptionGenerator(provider=OllamaProvider(requester=requester))
+    result = generator.generate_with_evidence({
+        "productName": "Senhoras almoço bolsa computador portátil saco com compartimento almoço",
+    })
+
+    assert result.caption == "🧡 Bolsa elegante\n#bolsa"
+    schema = calls[0]["format"]["properties"]["captions"]
+    assert schema["minItems"] == 3
+    assert schema["maxItems"] == 3
+    assert len(result.evaluations) == 3
+    assert result.evaluations[2].policy_valid is False

@@ -21,6 +21,23 @@ from .publication_quarantine import PublicationQuarantine
 from ArmoredIA.caption.policy import CaptionPolicyError, validate_caption
 
 
+def _provider_request_count(result_or_error, provider) -> int:
+    """Count HTTP attempts across policy rounds, not only the last model call."""
+    attempts = getattr(result_or_error, "provider_attempts", None)
+    if attempts:
+        return len(attempts)
+    total_rounds = getattr(result_or_error, "provider_requests", None)
+    if total_rounds is not None:
+        return max(0, int(total_rounds))
+    request_count = getattr(result_or_error, "request_count", None)
+    if request_count is not None:
+        return max(0, int(request_count))
+    provider_attempts = getattr(provider, "last_attempts", None)
+    if provider_attempts:
+        return len(provider_attempts)
+    return max(0, int(getattr(provider, "last_request_count", 0) or 0))
+
+
 class Pipeline:
     def __init__(self, db: Database, storage: Storage, vision: VisionService, studio: StudioService, publisher: Publisher, ia: AIService | None = None, publication_quarantine: PublicationQuarantine | None = None):
         self.db, self.storage = db, storage
@@ -141,13 +158,12 @@ class Pipeline:
                 try:
                     generated = generate_with_evidence(context)
                 except Exception as exc:
-                    request_count = getattr(exc, "request_count", None)
-                    if request_count is None:
-                        request_count = getattr(ia_provider, "last_request_count", 0)
-                    self.db.record_ia_provider_request_count(ia_attempt_id, request_count)
+                    self.db.record_ia_provider_request_count(
+                        ia_attempt_id, _provider_request_count(exc, ia_provider),
+                    )
                     raise
                 self.db.record_ia_provider_request_count(
-                    ia_attempt_id, getattr(ia_provider, "last_request_count", 0)
+                    ia_attempt_id, _provider_request_count(generated, ia_provider)
                 )
                 batch_id = str(generated.batch_id)
                 evaluations = tuple(generated.evaluations)
@@ -460,10 +476,9 @@ class Pipeline:
                         try:
                             generated = generate_with_evidence(dict(item.ia_context))
                         except Exception as exc:
-                            request_count = getattr(exc, "request_count", None)
-                            if request_count is None:
-                                request_count = getattr(provider, "last_request_count", 0)
-                            self.db.record_ia_provider_request_count(ia_attempt_id, request_count)
+                            self.db.record_ia_provider_request_count(
+                                ia_attempt_id, _provider_request_count(exc, provider),
+                            )
                             batch_id = getattr(exc, "batch_id", None)
                             evaluations = getattr(exc, "evaluations", ())
                             if batch_id and evaluations:
@@ -475,7 +490,7 @@ class Pipeline:
                             raise
                         self.db.record_ia_provider_request_count(
                             ia_attempt_id,
-                            getattr(provider, "last_request_count", 0),
+                            _provider_request_count(generated, provider),
                         )
                         self.db.record_caption_candidates(
                             item_id,
@@ -508,7 +523,7 @@ class Pipeline:
                             raise
                         self.db.record_ia_provider_request_count(
                             ia_attempt_id,
-                            getattr(provider, "last_request_count", 0),
+                            _provider_request_count(caption, provider),
                         )
                     if not str(caption or "").strip():
                         raise RuntimeError("armored-ia-empty-caption")

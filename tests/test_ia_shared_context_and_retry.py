@@ -50,10 +50,7 @@ def test_context_is_canonical_and_legacy_private_imports_remain_compatible():
         "technicalCharacteristics": ["detail"], "ignored": "must not leak",
     }
     expected = (
-        "Nome interno: Example\nID do item: 20\nID da loja: 10\nLoja: Shop\n"
-        "Categorias: [1, 2]\nPreço mínimo: 0\nPreço máximo: 10\nVendas: 0\n"
-        "Avaliação: 4\nMarca: Brand\nMarca alternativa: Alternate Brand\n"
-        "Modelo: X1\nModelo alternativo: Y1\nDescrição: Description\n"
+        "Produto identificado pela Vision: Example\nDescrição: Description\n"
         "Atributos: {'color': 'blue'}\nCaracterísticas: ['detail']"
     )
     assert context_text(product) == expected

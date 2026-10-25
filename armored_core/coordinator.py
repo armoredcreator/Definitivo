@@ -2705,6 +2705,26 @@ class Coordinator:
                     # rediscovery; never erase interruption evidence.
                     self.recovery.preserve_partial_download(item_id)
                     continue
+            item = self.db.get(item_id)
+            if (
+                item.state != State.PUBLISHED
+                and item.affiliate_url
+                and item.original_path.is_file()
+                and self.db.publication(item_id) is None
+            ):
+                storage_root = (
+                    getattr(self.storage, "storage_root", None)
+                    or getattr(self.storage, "root")
+                ).resolve()
+                try:
+                    item.original_path.resolve().relative_to(storage_root)
+                except ValueError:
+                    # The previous installation is a read-only source. Copy a
+                    # hash-verified approved original through Stock before
+                    # Recovery archives or rebuilds any derived workspace.
+                    from ArmoredStock.service import ArmoredStock
+
+                    ArmoredStock(self).relocate_trusted_legacy_original(item)
             try:
                 self.recover(item_id)
                 current = self.db.get(item_id)

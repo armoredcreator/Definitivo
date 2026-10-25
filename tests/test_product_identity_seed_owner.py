@@ -61,6 +61,29 @@ def test_seed_prefers_verified_original_over_earlier_missing_received_row(tmp_pa
         db.close()
 
 
+def test_seed_does_not_hash_originals_for_unique_product_identities(tmp_path, monkeypatch):
+    db = Database(tmp_path / "unique-identities.sqlite3")
+    try:
+        original = tmp_path / "unique-original.mp4"
+        original.write_bytes(b"large media would be expensive to hash")
+        _insert_approved(
+            db, content_id="source-seed-test_unique", message_id="501",
+            state=State.RECEIVED, path=original, sha="a" * 64,
+            shop_id="905", item_id="906", created_at="2026-03-01T00:00:00Z",
+        )
+        monkeypatch.setattr(
+            "armored_core.database.sha256_file",
+            lambda _path: (_ for _ in ()).throw(AssertionError("unique product must not hash media")),
+        )
+
+        rows = _seed(db)
+        assert [(row["product_key"], row["owner_content_id"]) for row in rows] == [
+            ("905:906", "source-seed-test_unique")
+        ]
+    finally:
+        db.close()
+
+
 def test_seed_prefers_original_with_matching_sha_over_forged_hash(tmp_path):
     db = Database(tmp_path / "hash-verification.sqlite3")
     try:

@@ -4,9 +4,9 @@ from typing import Any
 
 
 def context_text(product: dict[str, Any]) -> str:
-    """Render the same persisted Vision context for every caption provider."""
+    """Render only product-semantic Vision fields for caption generation."""
     fields = (
-        ("Nome interno", "productName"),
+        ("Produto identificado pela Vision", "productName"),
         ("Categoria", "category"),
         ("Nome da categoria", "categoryName"),
         ("Categoria do produto", "productCategory"),
@@ -15,18 +15,6 @@ def context_text(product: dict[str, Any]) -> str:
         ("Caso de uso", "useCase"),
         ("Estilo", "style"),
         ("Aparência", "appearance"),
-        ("ID do item", "itemId"),
-        ("ID da loja", "shopId"),
-        ("Loja", "shopName"),
-        ("Categorias", "productCatIds"),
-        ("Preço mínimo", "priceMin"),
-        ("Preço máximo", "priceMax"),
-        ("Vendas", "sales"),
-        ("Avaliação", "ratingStar"),
-        ("Marca", "brand"),
-        ("Marca alternativa", "brandName"),
-        ("Modelo", "model"),
-        ("Modelo alternativo", "modelName"),
         ("Descrição", "description"),
         ("Atributos", "attributes"),
         ("Características", "technicalCharacteristics"),

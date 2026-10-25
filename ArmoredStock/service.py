@@ -47,6 +47,89 @@ class ArmoredStock:
     def _sha256(path) -> str:
         return sha256_file(path)
 
+    def relocate_trusted_legacy_original(self, item: Any) -> Path | None:
+        """Copy a verified legacy ORIGINAL into canonical storage without touching its source.
+
+        Recovery uses this before resetting derived artifacts so Speech/Studio
+        never operate on a path outside the Definitivo workspace.
+        """
+        coordinator = self.coordinator
+        storage_root = (
+            getattr(coordinator.storage, "storage_root", None)
+            or getattr(coordinator.storage, "root")
+        ).resolve()
+        old_path = Path(item.original_path)
+        if not old_path.is_absolute():
+            old_path = storage_root / old_path
+        old_path = old_path.resolve()
+        try:
+            old_path.relative_to(storage_root)
+            return None
+        except ValueError:
+            pass
+
+        configured_legacy = (os.getenv("ARMORED_LEGACY_MEDIA_ROOT") or "").strip()
+        if not configured_legacy:
+            raise RuntimeError(
+                f"refusing-to-repair-original-outside-storage-root:{item.content_id}:{old_path}"
+            )
+        legacy_root_path = Path(configured_legacy).expanduser()
+        try:
+            legacy_root = legacy_root_path.resolve(strict=True)
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                f"trusted-legacy-root-unavailable:{item.content_id}:{legacy_root_path}"
+            ) from exc
+        try:
+            old_path.relative_to(legacy_root)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"refusing-to-repair-original-outside-trusted-legacy-root:{item.content_id}:{old_path}"
+            ) from exc
+        if not old_path.is_file():
+            raise FileNotFoundError(f"trusted-legacy-original-missing:{item.content_id}:{old_path}")
+        if not str(getattr(item, "affiliate_url", "") or "").strip():
+            raise RuntimeError(f"legacy-original-without-vision-approval:{item.content_id}")
+
+        expected = str(getattr(item, "original_sha256", "") or "").strip().lower()
+        if not expected:
+            raise RuntimeError(f"trusted-legacy-original-without-sha256:{item.content_id}")
+        source_digest = self._sha256(old_path)
+        if source_digest.lower() != expected:
+            raise RuntimeError(f"original-immutable-hash-mismatch:{item.content_id}")
+
+        canonical = coordinator.storage.original(
+            item.content_id,
+            old_path.suffix or ".mp4",
+            original_url=getattr(item, "original_url", None),
+            source_id=getattr(item, "source_id", None),
+        ).resolve()
+        try:
+            canonical.relative_to(storage_root)
+        except ValueError as exc:
+            raise RuntimeError(f"canonical-original-outside-storage-root:{item.content_id}") from exc
+        if canonical.is_file():
+            if self._sha256(canonical).lower() != source_digest.lower():
+                raise RuntimeError(f"canonical-original-path-conflict:{item.content_id}")
+        else:
+            canonical.parent.mkdir(parents=True, exist_ok=True)
+            partial = canonical.with_suffix(canonical.suffix + ".part")
+            if partial.exists() or partial.is_symlink():
+                raise FileExistsError(f"stock-partial-already-exists:{partial}")
+            before = old_path.stat()
+            shutil.copyfile(old_path, partial)
+            after = old_path.stat()
+            if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+                partial.unlink(missing_ok=True)
+                raise RuntimeError(f"legacy-original-changed-during-copy:{item.content_id}")
+            if self._sha256(partial).lower() != source_digest.lower():
+                partial.unlink(missing_ok=True)
+                raise RuntimeError(f"legacy-original-copy-hash-mismatch:{item.content_id}")
+            partial.replace(canonical)
+
+        coordinator.db.repair_original_path(item.content_id, canonical)
+        return canonical
+
     async def materialize_item(
         self,
         item: Any,

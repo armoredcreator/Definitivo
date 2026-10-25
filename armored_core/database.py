@@ -1081,7 +1081,11 @@ class Database:
             except (OSError, ValueError, RuntimeError):
                 return False
 
-        candidates: dict[str, list[tuple[tuple[int, ...], str, str]]] = {}
+        # Keep the cheap ranking evidence first and defer SHA-256 reads until
+        # two historical rows for the same product genuinely compete. Hashing
+        # every retained video here makes the first new Vision lookup scan the
+        # entire media archive, even when every product identity is unique.
+        candidates: dict[str, list[tuple[tuple[int, ...], Path | None, str, str, str]]] = {}
         for row in rows:
             try:
                 prior_context = json.loads(row["ia_context_json"] or "{}")
@@ -1095,25 +1099,51 @@ class Database:
             result_path = existing_file(row["result_path"])
             original_exists = original_path is not None
             result_exists = result_path is not None
-            sha_is_valid = valid_sha(row["original_sha256"], original_path)
-            score = (
+            score_prefix = (
                 int(str(row["content_id"]) in publication_evidence),
                 int(state_progress.get(str(row["state"] or "").upper(), 0)),
                 int(result_exists),
-                int(original_exists and sha_is_valid),
-                int(original_exists),
             )
             candidates.setdefault(product_key, []).append(
-                (score, str(row["created_at"] or ""), str(row["content_id"]))
+                (
+                    score_prefix,
+                    original_path,
+                    str(row["original_sha256"] or ""),
+                    str(row["created_at"] or ""),
+                    str(row["content_id"]),
+                )
             )
 
         owners: dict[str, str] = {}
         for product_key, entries in candidates.items():
-            # Score descending, then preserve earliest durable historical row.
-            winner = sorted(entries, key=lambda entry: (
-                tuple(-value for value in entry[0]), entry[1], entry[2]
-            ))[0]
-            owners[product_key] = winner[2]
+            best_prefix = max(entry[0] for entry in entries)
+            contenders = [entry for entry in entries if entry[0] == best_prefix]
+            existing_originals = [entry for entry in contenders if entry[1] is not None]
+            winner = None
+            if existing_originals:
+                # A verified ORIGINAL outranks an unverified one. Check in
+                # deterministic historical order and stop at the first valid
+                # digest; later files cannot win the final timestamp tie-break.
+                if len(existing_originals) > 1:
+                    checksum_candidates = sorted(
+                        (
+                            entry for entry in existing_originals
+                            if len(entry[2]) == 64
+                            and all(char in "0123456789abcdefABCDEF" for char in entry[2])
+                        ),
+                        key=lambda entry: (entry[3], entry[4]),
+                    )
+                    for entry in checksum_candidates:
+                        if valid_sha(entry[2], entry[1]):
+                            winner = entry
+                            break
+                if winner is None:
+                    # If no digest verifies, ORIGINAL presence still outranks
+                    # a missing file, preserving the old score semantics.
+                    winner = min(existing_originals, key=lambda entry: (entry[3], entry[4]))
+            else:
+                winner = min(contenders, key=lambda entry: (entry[3], entry[4]))
+            owners[product_key] = winner[4]
 
         self.conn.executemany(
             "INSERT OR IGNORE INTO product_identity_claims(product_key, owner_content_id) VALUES(?, ?)",

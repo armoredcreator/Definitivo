@@ -54,6 +54,43 @@ def test_policy_accepts_contextual_caption():
     ) == "🧡 Unhas organizadas\n#unhas #organizacao"
 
 
+@pytest.mark.parametrize(
+    ("caption", "product_name", "expected"),
+    [
+        (
+            "Parece até um apontador\n#descascador #legumes",
+            "Descascador de Legumes Apontador",
+            "🧡 Parece até um apontador\n#descascador #legumes",
+        ),
+        (
+            "Olha esse corte a laser\n#tanga #laser",
+            "Kit Calcinhas Sem costura Tanga corte a Laser Nao Marca na Roupa Invisível Academia Justo Conforto",
+            "🧡 Olha esse corte a laser\n#tanga #laser",
+        ),
+        (
+            "Compartimento pro almoço\n#bolsa #almoço",
+            "Senhoras almoço bolsa computador portátil saco com compartimento de almoço isolado acolchoado grande capacidade bolsa de",
+            "🧡 Compartimento pro almoço\n#bolsa #almoço",
+        ),
+    ],
+)
+def test_policy_accepts_approved_vision_text_samples(caption, product_name, expected):
+    context = {"productName": product_name}
+    assert _normalize_validate(
+        caption, product_name=product_name, product_context=context,
+    ) == expected
+
+
+def test_policy_rejects_secondary_product_noun_without_comparison():
+    product_name = "Descascador de Legumes Apontador"
+    with pytest.raises(CaptionPolicyError, match="substantivo secundário"):
+        validate_caption(
+            "🧡 Gostei do apontador\n#descascador #legumes",
+            product_name=product_name,
+            product_context={"productName": product_name},
+        )
+
+
 def test_sparse_vision_context_requires_product_head_not_a_material_fragment():
     context = {"productName": "Escovas de Aço Multiuso Kit 3 Pcs Aço Latão Nylon Cabo Plástico"}
     with pytest.raises(CaptionPolicyError, match="substantivo principal"):
@@ -344,8 +381,9 @@ def test_provider_makes_one_request_and_returns_up_to_ten(monkeypatch):
 
     assert calls["count"] == 1
     assert len(candidates) == 3
-    assert "Cada frase deve soar natural" in prompts[0]
-    assert "não junte palavras desconexas" in prompts[0]
+    assert "Prefira uma reação conversacional" in prompts[0]
+    assert "Não copie o título" in prompts[0]
+    assert "não recebe nem deve inferir nada de imagens ou vídeos" in prompts[0]
 
 
 def test_caption_selects_valid_candidate_without_second_gemini_call(monkeypatch):
@@ -455,11 +493,10 @@ def test_sparse_context_feedback_constrains_retry_to_grounded_name_terms():
         product_context={"productName": "Máscara Acidificante PH 250g"},
     )
     assert any("contém apenas o nome do produto" in item for item in guidance)
-    assert any("sequência consecutiva distintiva" in item for item in guidance)
-    assert any("hashtag de uma palavra" in item for item in guidance)
-    assert any("palavras seguras posteriores" in item.casefold() for item in guidance)
-    assert any("reação estética neutra" in item for item in guidance)
-    assert any("não use alegações de desempenho" in item.casefold() for item in guidance)
+    assert any("característica textual comprovada" in item for item in guidance)
+    assert any("identifique a categoria nas hashtags" in item for item in guidance)
+    assert any("não invente aparência" in item.casefold() for item in guidance)
+    assert any("comparação clara" in item for item in guidance)
 
 
 def test_policy_normalization_is_idempotent_and_only_fixes_formatting():
