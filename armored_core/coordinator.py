@@ -26,6 +26,15 @@ from .routing import load_routes, validate_contract_routes
 class Coordinator:
     """Single composition root for the isolated ArmoredCreator pipeline."""
 
+    @staticmethod
+    def _catch_up_state_priority(state: State) -> int:
+        """Resume completed media at Hub before spending time on another render."""
+        if state is State.PUBLISHING:
+            return 0
+        if state is State.SPEECH:
+            return 1
+        return 2
+
     def __init__(self, db, storage, vision, studio, publisher, source=None, ia=None, catch_up_budget=None, continuous_budget=None):
         self.db = db
         self.log = logging.getLogger(__name__)
@@ -80,6 +89,9 @@ class Coordinator:
         ordered = sorted(
             candidates.values(),
             key=lambda item: (
+                # Finish already-rendered items at Hub first, then resume
+                # Speech work, before assigning untouched historical items.
+                self._catch_up_state_priority(item.state),
                 rank.get(str(item.source_id), len(rank)),
                 int(item.telegram_message_id)
                 if str(item.telegram_message_id).isdigit() else 0,
@@ -182,11 +194,11 @@ class Coordinator:
 
             if (catch_up_run_id is None) != (max_catch_up_items is None):
                 raise ValueError("catch-up run ID and item limit must be supplied together")
-            continuous_args = (continuous_operation_id, max_items_per_day, max_items_per_batch)
+            continuous_args = (continuous_operation_id, max_items_per_batch)
             if any(value is not None for value in continuous_args) and any(
                 value is None for value in continuous_args
             ):
-                raise ValueError("continuous operation ID, daily limit, and batch size are required together")
+                raise ValueError("continuous operation ID and batch size are required together")
             if catch_up_run_id is not None and continuous_operation_id is not None:
                 raise ValueError("one-shot and continuous budgets are mutually exclusive")
 
@@ -203,7 +215,7 @@ class Coordinator:
                     continuous_budget = ContinuousOperationBudget(
                         storage.database / "continuous-work-budget.sqlite3",
                         continuous_operation_id,
-                        int(max_items_per_day),
+                        None,
                         int(max_items_per_batch),
                     )
                 coordinator = cls(
@@ -894,6 +906,7 @@ class Coordinator:
                     source_id: index for index, source_id in enumerate(configured_sources)
                 }
             production_items.sort(key=lambda item: (
+                self._catch_up_state_priority(item.state),
                 source_rank.get(str(item.source_id), len(source_rank)),
                 int(item.telegram_message_id)
                 if str(item.telegram_message_id).isdigit()
@@ -1598,7 +1611,7 @@ class Coordinator:
             item_id = str(self.sync.reserve_message(reservation))
             if not self.continuous_budget.try_claim(item_id):
                 self.log.info(
-                    "[COORDINATOR][LIVE] orçamento diário esgotado; candidato reservado "
+                    "[COORDINATOR][LIVE] limite da operação alcançado; candidato reservado "
                     "sem Vision/download e checkpoint mantido"
                 )
                 return []
@@ -1969,11 +1982,10 @@ class Coordinator:
     async def _run_continuous_async(
         self, poll_seconds: float = 2.0, max_live_cycles: int | None = None
     ) -> None:
-        """Run durable bounded batches, complete CATCH-UP, then stay LIVE.
+        """Run restart-safe batches until CATCH-UP completes, then stay LIVE.
 
-        A fixed UTC-day ledger caps unique content IDs across all batches and
-        LIVE. Exhaustion waits for the next window without advancing source
-        checkpoints or changing the persistent allowance.
+        Batch size is only a checkpoint/recovery boundary. There is no daily
+        item cap; each heavy video still runs serially.
         """
         assert self.continuous_budget is not None
         controller = self.continuous_budget
@@ -2052,8 +2064,8 @@ class Coordinator:
                 controller.close_batch(run_id)
                 self.log.info(
                     "[COORDINATOR][CONTINUOUS] lote %s concluído; histórico_completo=%s "
-                    "itens=%s quota_diária_restante=%s",
-                    run_id, history_complete, len(assigned), controller.remaining,
+                    "itens=%s",
+                    run_id, history_complete, len(assigned),
                 )
             finally:
                 self.catch_up_budget = previous_budget
@@ -2287,7 +2299,7 @@ class Coordinator:
         root = self.storage.root.resolve(strict=True)
         items = [self.db.get(item_id) for item_id in normalized_ids]
         before_hashes: dict[str, str] = {}
-        for item in items:
+        for item_index, item in enumerate(items):
             if item.state != State.SPEECH:
                 raise RuntimeError(
                     f"Speech/Studio v5 requires durable SPEECH state; "
@@ -2295,8 +2307,33 @@ class Coordinator:
                 )
             if not item.affiliate_url or not item.affiliate_name:
                 raise RuntimeError(f"Speech/Studio v5 requires Vision-approved affiliate metadata: {item.content_id}")
+            # Historical databases may still point at immutable originals in
+            # the previous installation. Stock's guarded relocation verifies
+            # the configured legacy root and SHA-256, copies into canonical
+            # storage, and updates only the path. Run it here as well as during
+            # recovery so a normal catch-up item cannot reach Speech/Studio
+            # with an external path.
+            original_candidate = item.original_path
+            if not original_candidate.is_absolute():
+                original_candidate = root / original_candidate
+            try:
+                original_candidate.resolve(strict=True).relative_to(root)
+            except ValueError:
+                from ArmoredStock.service import ArmoredStock
+
+                ArmoredStock(self).relocate_trusted_legacy_original(item)
+                item = self.db.get(item.content_id)
+                # Later Speech inputs and the manifest are built from this
+                # list. Refresh the durable row there too; otherwise those
+                # later stages keep using the legacy path from the stale
+                # dataclass even though SQLite already points at Definitivo.
+                items[item_index] = item
             original = item.original_path.resolve(strict=True)
-            workspace = item.workspace.resolve(strict=True)
+            # The item row may have been loaded before Stock repaired a legacy
+            # path, leaving its dataclass workspace stale even though the
+            # durable original_path now points into canonical storage. Derive
+            # the workspace from that verified original path.
+            workspace = original.parent.resolve(strict=True)
             try:
                 original.relative_to(workspace)
                 original.relative_to(root)
@@ -2396,7 +2433,7 @@ class Coordinator:
                     "telegram_message_id": str(item.telegram_message_id),
                     "content_id": str(item.content_id),
                     "state": State.SPEECH.value,
-                    "workspace": str(Path(item.workspace).resolve()),
+                    "workspace": str(original.parent.resolve(strict=True)),
                     "original_path": str(original),
                     "original_sha256": expected_hash,
                     "working_path": str(item.working_path.resolve()) if item.working_path else None,
@@ -2643,8 +2680,22 @@ class Coordinator:
 
     def recover_pending(self):
         allowed_ids = self._prepare_catch_up_budget()
+        # A Stock download can be interrupted while its durable item state is
+        # still RECEIVED. Keep RECEIVED on the normal pipeline path, but archive
+        # any partial download before that path can retry materialization.
+        received_rows = self.db.conn.execute(
+            "SELECT content_id FROM items WHERE state=? ORDER BY created_at, content_id",
+            (State.RECEIVED.value,),
+        ).fetchall()
+        for received_row in received_rows:
+            received_id = str(received_row["content_id"])
+            if allowed_ids is None or received_id in allowed_ids:
+                self.recovery.preserve_partial_download(received_id)
         states = (
-            State.RECEIVED.value, State.VISION.value, State.IA.value,
+            # RECEIVED is a normal production entry point (including approved
+            # Stock-ready items). Do not send these rows through generic
+            # Recovery: that would skip ArmoredIA and the caption gate.
+            State.VISION.value, State.IA.value,
             State.SPEECH.value, State.STUDIO_BATCH.value, State.STUDIO.value,
             State.PUBLISHING.value, State.RECOVERY.value,
             State.FAILED.value, State.PUBLISHED.value,
@@ -2661,12 +2712,21 @@ class Coordinator:
             if allowed_ids is not None and item_id not in allowed_ids:
                 continue
             if self.publication_quarantine.contains(item_id):
-                self.log.warning(
-                    "[COORDINATOR][RECOVERY][QUARANTINE] item=%s remains fenced; "
-                    "historical publication is not retried",
-                    item_id,
-                )
-                continue
+                # A durable message ID may arrive after the initial send timed
+                # out. Recovery may verify that exact ID read-only and close
+                # the fence; it must never send while the result is uncertain.
+                self.recovery.reconcile(item_id)
+                if self.publication_quarantine.contains(item_id):
+                    self.log.warning(
+                        "[COORDINATOR][RECOVERY][QUARANTINE] item=%s remains fenced; "
+                        "historical publication is not retried",
+                        item_id,
+                    )
+                    continue
+                current = self.db.get(item_id)
+                if current.state == State.PUBLISHED and current.cleanup_completed:
+                    recovered.append(item_id)
+                    continue
             if self.db.caption_recovery_blocked(item_id):
                 self.log.debug(
                     "[COORDINATOR][RECOVERY][CAPTION-BLOCKED] item=%s remains fenced",
@@ -2691,20 +2751,9 @@ class Coordinator:
             # stage from durable state/artifacts.
             if str(row["state"]) == State.FAILED.value:
                 self.db.transition(item_id, State.RECOVERY, "legacy-failed-recovery")
-            # RECEIVED without an immutable original is a durable Telegram
-            # reservation whose download was interrupted. The Sync source must
-            # rediscover/materialize it; Recovery cannot invent the missing
-            # bytes. Keep it in SQLite and let CATCH_UP/LIVE continue it.
-            if str(row["state"]) == State.RECEIVED.value:
-                item = self.db.get(item_id)
-                if not item.original_path.is_file():
-                    # An interrupted download leaves only the transactional
-                    # .part artifact. Sync always restarts materialization
-                    # from Telegram, so never treat the partial as a usable
-                    # original. Preserve it in a receipted backup before
-                    # rediscovery; never erase interruption evidence.
-                    self.recovery.preserve_partial_download(item_id)
-                    continue
+            # RECEIVED is intentionally handled by the normal CATCH-UP/LIVE
+            # flow, which performs IA and materializes through Stock. Recovery
+            # cannot infer that a normal approved item is interrupted.
             item = self.db.get(item_id)
             if (
                 item.state != State.PUBLISHED

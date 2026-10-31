@@ -20,9 +20,13 @@ def make_item(**kwargs):
         original_path=Path("original.mp4"),
         working_path=None,
         result_path=Path("result.mp4"),
-        affiliate_name="radio automotivo",
+        affiliate_name="radio automotivo com Bluetooth",
         affiliate_url="https://s.shopee.com.br/original",
-        publication_caption="🧡 Radio bonito\n#radio",
+        publication_caption="🧡 Conexão Bluetooth\n#radio",
+        ia_context={
+            "productName": "radio automotivo com Bluetooth",
+            "description": "conexão Bluetooth",
+        },
     )
     base.update(kwargs)
     return Item(**base)
@@ -42,12 +46,12 @@ class HubPublicationPackageTests(unittest.TestCase):
             original_url="https://s.shopee.com.br/original",
         )
         db.set_vision(
-            item_id, "radio automotivo", "https://s.shopee.com.br/affiliate",
-            ia_context={"productName": "radio automotivo"},
-            publication_caption="🧡 Radio bonito\n#radio",
+            item_id, "radio automotivo com Bluetooth", "https://s.shopee.com.br/affiliate",
+            ia_context={"productName": "radio automotivo com Bluetooth"},
+            publication_caption="🧡 Conexão Bluetooth\n#radio",
         )
         item = db.get(item_id)
-        result = storage.result(item_id, "affiliate", "radio automotivo")
+        result = storage.result(item_id, "affiliate", "radio automotivo com Bluetooth")
         result.write_bytes(source.read_bytes())
         db.set_result(item_id, result)
         db.transition(item_id, State.PUBLISHING, "speech-studio-v5-complete")
@@ -96,7 +100,11 @@ class HubPublicationPackageTests(unittest.TestCase):
     def test_formats_caption_plus_all_links(self):
         item = make_item(
             affiliate_name="Decoração para casa",
-            publication_caption="🧡 Casa bonita\n#casa #decoracao",
+            publication_caption="🧡 Um toque para casa\n#casa #decoracao",
+            ia_context={
+                "productName": "Decoração para casa",
+                "description": "um toque decorativo para casa",
+            },
             affiliate_urls=(
                 "https://s.shopee.com.br/o",
                 "https://s.shopee.com.br/1",
@@ -106,7 +114,7 @@ class HubPublicationPackageTests(unittest.TestCase):
         package = ArmoredHub._publication_text(item)
         self.assertEqual(
             package,
-            "🧡 Casa bonita\n#casa #decoracao\n\n"
+            "🧡 Um toque para casa\n#casa #decoracao\n\n"
             "https://s.shopee.com.br/o\n"
             "https://s.shopee.com.br/1\n"
             "https://s.shopee.com.br/2",
@@ -209,9 +217,9 @@ class HubPublicationPackageTests(unittest.TestCase):
                 storage = Storage(root)
                 item_id = SyncService(db, storage).ingest(source, "1", source_id="test")
                 db.set_vision(
-                    item_id, "radio automotivo", "https://s.shopee.com.br/original",
-                    ia_context={"productName": "radio automotivo"},
-                    publication_caption="🧡 Radio bonito\n#radio",
+                    item_id, "radio automotivo com Bluetooth", "https://s.shopee.com.br/original",
+                    ia_context={"productName": "radio automotivo com Bluetooth"},
+                    publication_caption="🧡 Conexão Bluetooth\n#radio",
                 )
                 result_path = db.get(item_id).workspace / "result.mp4"
                 result_path.write_bytes(b"test-video")

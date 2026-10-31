@@ -1,9 +1,7 @@
-import json
-
 import pytest
-import requests
 
 from ArmoredIA.service import ArmoredIA
+from ArmoredIA.caption.generator import CaptionGenerationError
 from armored_core.coordinator import Coordinator
 from armored_core.database import Database
 from armored_core.models import State
@@ -11,97 +9,77 @@ from armored_core.services import SyncService
 from armored_core.storage import Storage
 
 
-class Response:
-    status_code = 200
-    headers = {}
-    def __init__(self, body, status=200):
-        self.body, self.status_code = body, status
-    def raise_for_status(self):
-        if self.status_code >= 400:
-            raise requests.HTTPError("synthetic failure", response=self)
-    def json(self): return self.body
-    def close(self): pass
-
-
-@pytest.mark.parametrize("provider", ["gemini", "ollama"])
-@pytest.mark.parametrize("failed", [False, True])
-def test_selected_provider_is_persisted_without_automatic_switch(tmp_path, monkeypatch, provider, failed):
-    monkeypatch.setenv("ARMORED_IA_PROVIDER", provider)
-    monkeypatch.setenv("ARMORED_IA_MODEL", "synthetic-gemini-model")
-    monkeypatch.setenv("ARMORED_IA_OLLAMA_MODEL", "synthetic-ollama-model")
-    monkeypatch.setenv("GEMINI_API_KEY", "synthetic-test-key")
-    monkeypatch.setenv("ARMORED_IA_MAX_ATTEMPTS", "1")
+@pytest.mark.parametrize("configured_provider", ["ollama", "gemini", "unknown"])
+def test_pipeline_does_not_invent_caption_for_unknown_product_category(
+    tmp_path, monkeypatch, configured_provider,
+):
+    monkeypatch.setenv("ARMORED_IA_PROVIDER", configured_provider)
     monkeypatch.setenv("ARMORED_IA_ENABLED", "1")
     monkeypatch.setenv("ARMORED_IA_CAPTION_ENABLED", "1")
+    monkeypatch.setenv("ARMORED_IA_CAPTION_TITLE_RULES", "1")
     storage = Storage(tmp_path)
     db = Database(storage.database / "test.sqlite3")
     source = tmp_path / "source.mp4"
     source.write_bytes(b"synthetic original")
     item_id = SyncService(db, storage).ingest(source, "1", source_id="synthetic")
-    db.set_vision(item_id, "Produto para casa", "https://affiliate.invalid/example", ia_context={"productName": "Produto para casa", "category": "casa", "shopId": "10", "itemId": "20"})
+    db.set_vision(
+        item_id,
+        "Produto para casa",
+        "https://affiliate.invalid/example",
+        ia_context={
+            "productName": "Produto para casa",
+            "category": "casa",
+            "usage": "ambiente acolhedor",
+            "shopId": "10",
+            "itemId": "20",
+        },
+    )
     ia = ArmoredIA()
-    raw = json.dumps({"captions": ["Casa bonita #casa"]})
-    body = {"response": raw} if provider == "ollama" else {"candidates": [{"content": {"parts": [{"text": raw}]}}]}
-    calls = []
-    def request(*args, **kwargs):
-        calls.append(ia.provider_configuration()["provider"])
-        return Response(body, 503 if failed else 200)
-    ia.caption_generator.provider.requester = request
+    assert ia.caption_generator.provider is None
+    assert ia.provider_configuration() == {
+        "provider": "local",
+        "model": "deterministic-caption-rules",
+    }
     coordinator = Coordinator(db, storage, None, None, None, ia=ia)
     try:
-        if failed:
-            with pytest.raises(Exception):
-                coordinator.pipeline.run(item_id, stop_after_ia=True)
-            assert db.get(item_id).state is State.RECOVERY
-        else:
+        with pytest.raises(CaptionGenerationError):
             coordinator.pipeline.run(item_id, stop_after_ia=True)
-            assert db.get(item_id).state is State.SPEECH
-            assert db.get(item_id).publication_caption == "🧡 Casa bonita\n#casa"
-        receipt = db.conn.execute("SELECT * FROM ia_generation_attempts WHERE content_id=?", (item_id,)).fetchone()
-        assert receipt["provider"] == provider
-        assert receipt["model"] == f"synthetic-{provider}-model"
-        assert receipt["status"] == ("FAILED" if failed else "COMPLETE")
-        assert receipt["request_count"] == 1
-        assert calls == [provider]
+        assert db.get(item_id).publication_caption is None
         assert db.publication(item_id) is None
-        trace = storage.root / "storage" / "logs" / "pipeline_trace.jsonl"
-        records = [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()]
-        assert any(row.get("event") == "CONFIGURED" and row.get("provider") == provider for row in records)
     finally:
         coordinator.close()
 
 
-def test_policy_retry_request_count_includes_every_ollama_generation_round(tmp_path, monkeypatch):
+def test_title_only_item_gets_a_local_caption_and_zero_provider_requests(
+    tmp_path, monkeypatch,
+):
     monkeypatch.setenv("ARMORED_IA_PROVIDER", "ollama")
-    monkeypatch.setenv("ARMORED_IA_OLLAMA_MODEL", "synthetic-ollama-model")
-    monkeypatch.setenv("ARMORED_IA_MAX_ATTEMPTS", "1")
-    monkeypatch.setenv("ARMORED_IA_POLICY_RETRIES", "1")
     monkeypatch.setenv("ARMORED_IA_CAPTION_ENABLED", "1")
+    monkeypatch.setenv("ARMORED_IA_CAPTION_TITLE_RULES", "0")
     storage = Storage(tmp_path)
     db = Database(storage.database / "test.sqlite3")
     source = tmp_path / "source.mp4"
     source.write_bytes(b"synthetic original")
     item_id = SyncService(db, storage).ingest(source, "2", source_id="synthetic")
-    context = {"productName": "Esfoliante Corporal Hidratante Banho Estrias 150g Cicatribem"}
-    db.set_vision(item_id, context["productName"], "https://affiliate.invalid/example", ia_context=context)
-    ia = ArmoredIA()
-    calls = []
-    body = {"response": json.dumps({"captions": [
-        {"text": "Hidratante para o banho", "hashtags": ["#hidratante", "#banho"]}
-    ]})}
-    ia.caption_generator.provider.requester = lambda *_args, **_kwargs: (
-        calls.append("request") or Response(body)
+    title = "Esfoliante Corporal Hidratante Banho Estrias 150g Cicatribem"
+    db.set_vision(
+        item_id, title, "https://affiliate.invalid/example",
+        ia_context={"productName": title},
     )
+    ia = ArmoredIA()
     coordinator = Coordinator(db, storage, None, None, None, ia=ia)
     try:
         coordinator.pipeline.run(item_id, stop_after_ia=True)
+        assert db.get(item_id).state is State.SPEECH
+        assert db.get(item_id).publication_caption == (
+            "🧡 Esfoliação corporal no banho\n#esfoliante"
+        )
         receipt = db.conn.execute(
-            "SELECT status,request_count FROM ia_generation_attempts WHERE content_id=?",
-            (item_id,),
+            "SELECT provider,model,status,request_count FROM ia_generation_attempts "
+            "WHERE content_id=?", (item_id,),
         ).fetchone()
-        assert db.get(item_id).publication_caption == "🧡 Esfoliante para banho\n#esfoliante #banho"
-        assert receipt["status"] == "COMPLETE"
-        assert receipt["request_count"] == 2
-        assert len(calls) == 2
+        assert tuple(receipt) == (
+            "local", "deterministic-caption-rules", "COMPLETE", 0,
+        )
     finally:
         coordinator.close()

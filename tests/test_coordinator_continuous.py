@@ -58,13 +58,16 @@ class Vision:
         return VisionResult(
             "radio automotivo",
             "https://shopee.com.br/affiliate/live-result",
-            ia_context={"productName": "radio automotivo"},
+            ia_context={
+                "productName": "radio automotivo",
+                "description": "Conexão Bluetooth",
+            },
         )
 
 
 class IA:
     def generate_caption(self, _context):
-        return "🧡 Radio bonito\n#radio"
+        return "🧡 Conexão Bluetooth\n#radio"
 
 
 class Studio:
@@ -105,6 +108,44 @@ class CoordinatorContinuousTests(unittest.TestCase):
         )
         install_synthetic_speech_studio(coordinator)
         return coordinator
+
+    def test_pending_publications_are_claimed_before_speech_and_unstarted_history(self):
+        received = SimpleNamespace(
+            content_id="received-later",
+            state=State.RECEIVED,
+            source_id="source",
+            telegram_message_id="10",
+        )
+        publishing = SimpleNamespace(
+            content_id="ready-for-hub",
+            state=State.PUBLISHING,
+            source_id="source",
+            telegram_message_id="5",
+        )
+        speech = SimpleNamespace(
+            content_id="speech-recovery",
+            state=State.SPEECH,
+            source_id="source",
+            telegram_message_id="900",
+        )
+        empty_cursor = SimpleNamespace(fetchall=lambda: [])
+        db = SimpleNamespace(
+            pending_vision_candidates=lambda: [],
+            catch_up_production_items=lambda: [received, speech, publishing],
+            pre_download_recovery_items=lambda: [],
+            vision_approved_interrupted_items=lambda: [],
+            conn=SimpleNamespace(execute=lambda *_args: empty_cursor),
+        )
+        coordinator = Coordinator.__new__(Coordinator)
+        coordinator.db = db
+        coordinator.publication_quarantine = SimpleNamespace(quarantined_ids=lambda: set())
+        coordinator.source = SimpleNamespace(sources=[SimpleNamespace(source_id="source")])
+
+        assert coordinator._catch_up_candidate_ids() == [
+            "ready-for-hub",
+            "speech-recovery",
+            "received-later",
+        ]
 
     def test_run_forever_processes_live_cycles_without_second_pipeline(self):
         with tempfile.TemporaryDirectory() as td:

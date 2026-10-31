@@ -292,8 +292,32 @@ class Database:
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             consumed_at TEXT
         );
+        CREATE TABLE IF NOT EXISTS published_caption_edits (
+            edit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_id TEXT NOT NULL,
+            content_id TEXT NOT NULL,
+            published_message_id TEXT NOT NULL,
+            destination_chat_id TEXT NOT NULL,
+            destination_topic_id INTEGER NOT NULL,
+            previous_caption TEXT NOT NULL,
+            selected_caption TEXT NOT NULL,
+            final_caption TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            model TEXT,
+            generation_batch_id TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('READY','SENDING','CONFIRMED','UNKNOWN','FAILED','BLOCKED')),
+            error_type TEXT,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            confirmed_at TEXT,
+            UNIQUE(batch_id, content_id),
+            FOREIGN KEY(content_id) REFERENCES items(content_id)
+        );
         CREATE INDEX IF NOT EXISTS idx_caption_candidates_content
             ON caption_candidates(content_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_published_caption_edits_batch_status
+            ON published_caption_edits(batch_id, status, content_id);
         CREATE TABLE IF NOT EXISTS runtime_locks (
             name TEXT PRIMARY KEY,
             pid INTEGER NOT NULL,
@@ -1612,6 +1636,131 @@ class Database:
         )
         self.conn.commit()
 
+    def published_caption_edit(self, batch_id: str, item_id: str):
+        return self.conn.execute(
+            "SELECT * FROM published_caption_edits WHERE batch_id=? AND content_id=?",
+            (str(batch_id), str(item_id)),
+        ).fetchone()
+
+    def prepare_published_caption_edit(
+        self,
+        *,
+        batch_id: str,
+        item_id: str,
+        published_message_id: str,
+        destination_chat_id: str,
+        destination_topic_id: int,
+        previous_caption: str,
+        selected_caption: str,
+        final_caption: str,
+        provider: str,
+        model: str | None,
+        generation_batch_id: str,
+    ):
+        """Durably prepare a caption-only edit for an already confirmed post."""
+        content_id = str(item_id)
+        with self.conn:
+            item = self.conn.execute(
+                "SELECT state FROM items WHERE content_id=?", (content_id,)
+            ).fetchone()
+            receipt = self.conn.execute(
+                "SELECT published_message_id,confirmed,verification_status,"
+                "destination_chat_id,destination_topic_id FROM publications WHERE content_id=?",
+                (content_id,),
+            ).fetchone()
+            if item is None or str(item["state"]) != "PUBLISHED":
+                raise RuntimeError("caption-edit-requires-published-item")
+            if (
+                receipt is None
+                or not bool(receipt["confirmed"])
+                or str(receipt["verification_status"] or "").upper() != "CONFIRMED"
+                or str(receipt["published_message_id"] or "") != str(published_message_id)
+                or str(receipt["destination_chat_id"] or "") != str(destination_chat_id)
+                or int(receipt["destination_topic_id"] or 0) != int(destination_topic_id)
+            ):
+                raise RuntimeError("caption-edit-receipt-mismatch")
+            existing = self.conn.execute(
+                "SELECT * FROM published_caption_edits WHERE batch_id=? AND content_id=?",
+                (str(batch_id), content_id),
+            ).fetchone()
+            values = (
+                str(published_message_id), str(destination_chat_id), int(destination_topic_id),
+                str(previous_caption), str(selected_caption), str(final_caption),
+                str(provider), None if model is None else str(model), str(generation_batch_id),
+            )
+            if existing is not None:
+                old_values = (
+                    str(existing["published_message_id"]), str(existing["destination_chat_id"]),
+                    int(existing["destination_topic_id"]), str(existing["previous_caption"]),
+                    str(existing["selected_caption"]), str(existing["final_caption"]),
+                    str(existing["provider"]), existing["model"], str(existing["generation_batch_id"]),
+                )
+                if old_values != values:
+                    raise RuntimeError("caption-edit-batch-payload-mismatch")
+                return existing
+            active = self.conn.execute(
+                "SELECT 1 FROM published_caption_edits WHERE content_id=? "
+                "AND status IN ('READY','SENDING','UNKNOWN') LIMIT 1", (content_id,)
+            ).fetchone()
+            if active is not None:
+                raise RuntimeError("caption-edit-already-in-progress")
+            self.conn.execute(
+                "INSERT INTO published_caption_edits(batch_id,content_id,published_message_id,"
+                "destination_chat_id,destination_topic_id,previous_caption,selected_caption,"
+                "final_caption,provider,model,generation_batch_id,status) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,'READY')",
+                (str(batch_id), content_id, *values),
+            )
+            return self.conn.execute(
+                "SELECT * FROM published_caption_edits WHERE batch_id=? AND content_id=?",
+                (str(batch_id), content_id),
+            ).fetchone()
+
+    def set_published_caption_edit_status(
+        self, edit_id: int, status: str, *, error_type: str | None = None
+    ) -> None:
+        status = str(status).upper()
+        if status not in {"SENDING", "CONFIRMED", "UNKNOWN", "FAILED", "BLOCKED"}:
+            raise ValueError("invalid-published-caption-edit-status")
+        with self.conn:
+            row = self.conn.execute(
+                "SELECT content_id,selected_caption,published_message_id,status "
+                "FROM published_caption_edits WHERE edit_id=?", (int(edit_id),)
+            ).fetchone()
+            if row is None:
+                raise KeyError(edit_id)
+            if status == "CONFIRMED":
+                receipt = self.conn.execute(
+                    "SELECT confirmed,verification_status,published_message_id FROM publications "
+                    "WHERE content_id=?", (str(row["content_id"]),)
+                ).fetchone()
+                item = self.conn.execute(
+                    "SELECT state FROM items WHERE content_id=?", (str(row["content_id"]),)
+                ).fetchone()
+                if (
+                    item is None or str(item["state"]) != "PUBLISHED" or receipt is None
+                    or not bool(receipt["confirmed"])
+                    or str(receipt["verification_status"] or "").upper() != "CONFIRMED"
+                    or str(receipt["published_message_id"] or "") != str(row["published_message_id"])
+                ):
+                    raise RuntimeError("caption-edit-confirmation-receipt-changed")
+                self.conn.execute(
+                    "UPDATE items SET publication_caption=?,updated_at=CURRENT_TIMESTAMP WHERE content_id=?",
+                    (str(row["selected_caption"]), str(row["content_id"])),
+                )
+            self.conn.execute(
+                "UPDATE published_caption_edits SET status=?,error_type=?,attempts=attempts+?,"
+                "updated_at=CURRENT_TIMESTAMP,confirmed_at=CASE WHEN ?='CONFIRMED' "
+                "THEN CURRENT_TIMESTAMP ELSE confirmed_at END WHERE edit_id=?",
+                (status, error_type, 1 if status == "SENDING" else 0, status, int(edit_id)),
+            )
+            if status == "CONFIRMED":
+                self.conn.execute(
+                    "UPDATE caption_recovery SET status='SUCCEEDED',reason='published-caption-edit-confirmed',"
+                    "updated_at=CURRENT_TIMESTAMP WHERE content_id=? AND status='STARTED'",
+                    (str(row["content_id"]),),
+                )
+
     def record_caption_candidates(self, item_id: str, batch_id: str, evaluations) -> None:
         """Persist every caption candidate and its local Policy/ranking decision."""
         self.conn.executemany(
@@ -1689,7 +1838,13 @@ class Database:
             self.conn.rollback()
             raise
 
-    def claim_caption_recovery(self, item_id: str, *, previous_caption: str | None = None) -> str:
+    def claim_caption_recovery(
+        self,
+        item_id: str,
+        *,
+        previous_caption: str | None = None,
+        retry_stale_success: bool = False,
+    ) -> str:
         """Claim the single durable IA recovery call for a missing/invalid caption."""
         content_id = str(item_id)
         self.conn.execute("BEGIN IMMEDIATE")
@@ -1700,6 +1855,19 @@ class Database:
             ).fetchone()
             if row is not None:
                 status = str(row["status"])
+                if status == "SUCCEEDED" and retry_stale_success:
+                    # A later migration/reset may clear the caption while
+                    # leaving its old success receipt behind. When the caller
+                    # has already proved the current caption and every selected
+                    # candidate invalid, allow one new durable generation.
+                    self.conn.execute(
+                        "UPDATE caption_recovery SET attempts=attempts+1,status='STARTED',"
+                        "reason='previous-success-caption-missing-or-invalid',"
+                        "previous_caption=?,updated_at=CURRENT_TIMESTAMP WHERE content_id=?",
+                        (previous_caption, content_id),
+                    )
+                    self.conn.commit()
+                    return "STARTED"
                 if status in {"SUCCEEDED", "BLOCKED"}:
                     if status == "BLOCKED":
                         authorization = self.conn.execute(
@@ -2069,6 +2237,18 @@ class Database:
                 "started_at=excluded.started_at, heartbeat_at=excluded.heartbeat_at",
                 (str(name), current_pid, now, now),
             )
+            if str(name) == "coordinator":
+                attempt_table = self.conn.execute(
+                    "SELECT 1 FROM sqlite_master "
+                    "WHERE type='table' AND name='ia_generation_attempts'"
+                ).fetchone()
+                if attempt_table is not None:
+                    self.conn.execute(
+                        "UPDATE ia_generation_attempts SET status='INTERRUPTED',"
+                        "error_type=COALESCE(error_type,'coordinator-restarted'),"
+                        "finished_at=COALESCE(finished_at,CURRENT_TIMESTAMP) "
+                        "WHERE status='STARTED'"
+                    )
             self.conn.commit()
         except BaseException:
             self.conn.rollback()

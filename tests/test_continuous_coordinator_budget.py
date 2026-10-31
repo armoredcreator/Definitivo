@@ -118,15 +118,15 @@ class _ContinuousSource:
 class _Vision:
     def identify(self, item):
         return VisionResult(
-            "radio automotivo",
+            "radio automotivo com Bluetooth",
             f"https://affiliate.invalid/{item.telegram_message_id}",
-            ia_context={"productName": "radio automotivo"},
+            ia_context={"productName": "radio automotivo com Bluetooth"},
         )
 
 
 class _IA:
     def generate_caption(self, _context):
-        return "🧡 Radio bonito\n#radio"
+        return "🧡 Conexão Bluetooth\n#radio"
 
 
 class _Hub:
@@ -201,10 +201,10 @@ def test_continuous_start_drains_publishing_v5_before_live_without_rerender(tmp_
         original_url="https://shopee.invalid/known",
     )
     db.set_vision(
-        item_id, "radio automotivo", "https://affiliate.invalid/known",
-        ia_context={"productName": "radio automotivo"},
+        item_id, "radio automotivo com Bluetooth", "https://affiliate.invalid/known",
+        ia_context={"productName": "radio automotivo com Bluetooth"},
     )
-    db.set_caption(item_id, "🧡 Radio bonito\n#radio")
+    db.set_caption(item_id, "🧡 Conexão Bluetooth\n#radio")
     item = db.get(item_id)
     output = storage.result(
         item_id, item.affiliate_url, item.affiliate_name, source_id=item.source_id

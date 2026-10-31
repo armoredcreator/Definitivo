@@ -29,13 +29,13 @@ class Vision:
 
 class IA:
     def generate_caption(self, _context):
-        return "🧡 Bancada cozinha\n#cozinha"
+        return "🧡 Fica suspensa\n#cozinha"
 
     def generate_caption_with_evidence(self, context):
         from ArmoredIA.caption.generator import CaptionGenerationResult
         from ArmoredIA.caption.selector import CaptionCandidateEvaluation, CaptionSelection
 
-        caption = "🧡 Bancada cozinha\n#cozinha"
+        caption = "🧡 Fica suspensa\n#cozinha"
         selection = CaptionSelection(caption=caption, index=0, score=1.0)
         evaluation = CaptionCandidateEvaluation(
             index=0, caption=caption, policy_valid=True, rejection_reason=None,
@@ -184,16 +184,18 @@ class CoordinatorTests(unittest.TestCase):
             coordinator = Coordinator(db, storage, Vision(), Studio(storage), pub, Source(src), IA())
             install_synthetic_speech_studio(coordinator)
 
-            item_id = coordinator.process_next()
+            try:
+                item_id = coordinator.process_next()
 
-            self.assertEqual(item_id, "telegram-100")
-            row = db.get(item_id)
-            self.assertEqual(row.state, State.PUBLISHED)
-            self.assertEqual(row.original_path.read_bytes(), b"ORIGINAL")
-            self.assertEqual(pub.count, 1)
-            self.assertIsNone(coordinator.process_next())
-            self.assertEqual(pub.count, 1)
-            coordinator.close()
+                self.assertEqual(item_id, "telegram-100")
+                row = db.get(item_id)
+                self.assertEqual(row.state, State.PUBLISHED)
+                self.assertEqual(row.original_path.read_bytes(), b"ORIGINAL")
+                self.assertEqual(pub.count, 1)
+                self.assertIsNone(coordinator.process_next())
+                self.assertEqual(pub.count, 1)
+            finally:
+                coordinator.close()
 
 if __name__ == "__main__":
     unittest.main()

@@ -66,10 +66,10 @@ def test_run_defaults_to_closed_hub_and_requires_explicit_publish_flag(tmp_path:
     calls.clear()
     continuous = [
         "--root", str(tmp_path), "--continuous", "--continuous-operation-id", "production",
-        "--max-items-per-day", "20", "--max-items-per-batch", "3",
+        "--max-items-per-batch", "3",
     ]
     assert main(continuous) == 0
-    assert calls[0] == ("build", True, False, None, None, "production", 20, 3)
+    assert calls[0] == ("build", True, False, None, None, "production", None, 3)
 
 
 def test_run_requires_explicit_bounded_budget_and_rejects_live_cycles(tmp_path: Path, monkeypatch):
@@ -91,9 +91,16 @@ def test_run_requires_explicit_bounded_budget_and_rejects_live_cycles(tmp_path: 
     with pytest.raises(SystemExit) as continuous_live_limit:
         main([
             "--root", str(tmp_path), "--continuous", "--continuous-operation-id", "production",
-            "--max-items-per-day", "20", "--max-items-per-batch", "3", "--max-live-cycles", "1",
+            "--max-items-per-batch", "3", "--max-live-cycles", "1",
         ])
     assert continuous_live_limit.value.code == 2
+
+    with pytest.raises(SystemExit) as obsolete_daily_limit:
+        main([
+            "--root", str(tmp_path), "--continuous", "--continuous-operation-id", "production",
+            "--max-items-per-day", "20",
+        ])
+    assert obsolete_daily_limit.value.code == 2
 
 
 def test_validate_config_rejects_duplicate_hub_destination(tmp_path: Path, monkeypatch, capsys):

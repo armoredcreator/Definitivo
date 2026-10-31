@@ -84,9 +84,9 @@ def _install_coordinator_speech_studio_test_seam(coordinator):
 class VisionStage:
     def identify(self, item):
         return VisionResult(
-            f"radio automotivo {item.item_id}",
+            f"radio automotivo com Bluetooth {item.item_id}",
             f"https://example.invalid/affiliate-{item.item_id}",
-            ia_context={"productName": f"radio automotivo {item.item_id}"},
+            ia_context={"productName": f"radio automotivo com Bluetooth {item.item_id}"},
         )
 
 
@@ -100,7 +100,7 @@ class FailingFirstIA:
         if item_id == "100" and self.calls[item_id] == 1:
             from ArmoredIA.caption.generator import CaptionGenerationError
             raise CaptionGenerationError("Nenhuma das 10 candidata(s) passou pela Policy")
-        return "🧡 Radio bonito\n#radio"
+        return "🧡 Conexão Bluetooth\n#radio"
 
     def generate_caption_with_evidence(self, context):
         """Model the real IA evidence contract used by durable recovery."""
@@ -109,7 +109,7 @@ class FailingFirstIA:
 
         item_id = context["productName"].split()[-1]
         self.calls[item_id] = self.calls.get(item_id, 0) + 1
-        caption = "🧡 Radio bonito\n#radio"
+        caption = "🧡 Conexão Bluetooth\n#radio"
         selection = CaptionSelection(caption=caption, index=0, score=1.0)
         evaluation = CaptionCandidateEvaluation(
             index=0,
@@ -225,9 +225,9 @@ class CaptionBatchRecoveryCatchUpTests(unittest.TestCase):
                     if item.item_id == "100":
                         raise VisionUnresolvedError("produto Shopee não encontrado")
                     return VisionResult(
-                        f"radio automotivo {item.item_id}",
+                        f"radio automotivo com Bluetooth {item.item_id}",
                         f"https://example.invalid/affiliate-{item.item_id}",
-                        ia_context={"productName": f"radio automotivo {item.item_id}"},
+                        ia_context={"productName": f"radio automotivo com Bluetooth {item.item_id}"},
                     )
 
             publisher = DeterministicPublisher()

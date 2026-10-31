@@ -128,17 +128,30 @@ Você recebe contexto de um produto que JÁ FOI identificado pela Vision V1.
 A identidade da Vision V1 é a fonte de verdade. Você NÃO identifica, corrige,
 substitui ou renomeia o produto.
 
-Gere até 10 opções editoriais curtas, naturais e específicas, como uma reação humana
-ao que a Vision identificou. Use somente os dados textuais estruturados abaixo; você
-não recebe nem deve inferir nada de imagens ou vídeos.
-Não copie o título nem transforme a frase em anúncio. Não invente atributos, benefícios
-ou cenários. A frase principal pode comentar uma característica textual; as hashtags
-podem identificar a categoria. Prefira uma reação conversacional que combine com o item
-atual. Não reutilize características, substantivos ou exemplos de outro produto.
-
+Gere opções editoriais curtas, naturais e específicas a partir dos dados textuais da Vision;
+você não recebe nem deve inferir nada de imagens ou vídeos.
+Não copie o título nem transforme o nome do produto em chamada de catálogo ou anúncio. Não
+invente atributos, benefícios ou cenários. Não é necessário declarar um benefício; só mencione um
+quando estiver claramente confirmado e soar natural. Escolha um detalhe confirmado como foco; só
+combine detalhes quando a Vision confirmar a relação entre eles e a frase continuar natural. Não
+faça uma lista de atributos nem reutilize características, substantivos ou fórmulas de outro
+produto. A frase deve soar como comentário espontâneo, não como fragmento de catálogo com o nome
+do produto seguido de especificações. Não escreva palavras-chave em sequência.
+A menção ao nome comum do produto ou à categoria na frase é opcional: use-a somente se deixar
+a observação mais clara e natural; caso contrário, comente o detalhe confirmado. As hashtags
+podem identificar a categoria. Prefira uma frase curta completa, com construção natural em
+português, em vez de um cabeçalho de substantivos e adjetivos. Se a frase puder ser confundida
+com um trecho do título, reescreva-a com construção própria, sem copiar a sequência. Prefira um
+verbo natural quando isso ajudar a frase. Não use uma fórmula pronta
+universal nem repita a mesma abertura entre os itens.
+O título pode estar incompleto ou conter nomes de linha. Trate como fato somente uma característica
+escrita claramente nele; não deduza textura, formato, posição, benefício ou efeito a partir do tipo
+de produto. Não use adjetivos como “macio”, “fofinho”, “confortável” ou resultados como “reduz”
+sem suporte textual direto. Prefira uma paráfrase simples de um atributo explícito e descarte
+palavras ambíguas que possam ser marca, modelo ou nome de coleção.
 PARA CADA OPÇÃO:
 - Português do Brasil.
-- De 2 a 6 palavras no texto principal; conectores curtos podem deixar a frase natural.
+- De 2 a 5 palavras no texto principal; conectores curtos podem deixar a frase natural.
 - Não gere emoji; a política central aplica o emoji fixo.
 - Exatamente 1 ou 2 hashtags.
 - Hashtags devem estar comprovadas pelo nome, categoria, uso ou descrição persistidos; não use tags genéricas sem relação demonstrável.
@@ -148,7 +161,7 @@ PARA CADA OPÇÃO:
 - NÃO use embalagem, tampa, frasco ou lacre.
 - NÃO use linguagem de venda, urgência, promoção ou desconto.
 - NÃO escreva marca, modelo, quantidade, medida, pH, voltagem ou especificação técnica.
-- Identifique o produto no texto principal ou nas hashtags. Um substantivo secundário do título exige comparação explícita ("parece", "tipo", "como", "lembra").
+- A categoria pode aparecer nas hashtags; não force o nome do produto no texto principal. Um substantivo secundário do título exige comparação explícita ("parece", "tipo", "como", "lembra").
 - Não use hashtags para contornar as regras.
 
 Retorne SOMENTE JSON:
@@ -159,10 +172,11 @@ Retorne SOMENTE JSON:
             reasons = "; ".join(str(value) for value in policy_feedback[:8])
             prompt += (
                 "\n\nFEEDBACK DA POLICY PARA A NOVA RODADA: a rodada anterior foi rejeitada. "
-                f"Rejeições e ações corretivas: {reasons}. Gere opções realmente diferentes "
-                "das rejeitadas, aplique cada ação ao texto e às hashtags, conte as palavras "
-                "do texto principal e use de 2 a 6. Garanta suporte Vision para cada característica e identifique o produto no texto ou nas hashtags. Não acrescente subtítulo, emoji "
-                "ou hashtag ao texto principal. Não invente características nem benefícios."
+                f"Rejeições e ações corretivas: {reasons}. Gere uma observação editorial realmente "
+                "diferente das rejeitadas. Conte de 2 a 5 palavras no texto principal; não copie "
+                "o título, não liste atributos e varie a construção sem repetir a mesma abertura. As hashtags "
+                "podem identificar a categoria. Todo fato deve estar apoiado pela Vision. "
+                "Não acrescente subtítulo, emoji ou hashtag ao texto principal."
             )
         previous_candidates = context.get("__policy_retry_previous_candidates")
         if isinstance(previous_candidates, list) and previous_candidates:

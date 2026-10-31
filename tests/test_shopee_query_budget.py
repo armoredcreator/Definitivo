@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import sqlite3
 
 import pytest
 
@@ -61,7 +62,7 @@ def test_query_budget_limit_validation(tmp_path: Path):
     budget.close()
 
 
-def test_production_vision_fails_closed_without_quota_authorization(
+def test_production_vision_blocks_api_without_valid_persistent_quota(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     from ArmoredVision.modules.v1.shopee_api import ShopeeAffiliateAPI
@@ -84,10 +85,20 @@ def test_production_vision_fails_closed_without_quota_authorization(
 
         def get_exact_product(self, shop_id, item_id):
             self.calls += 1
-            raise AssertionError("query must be blocked before transport")
+            return {
+                "shopId": shop_id,
+                "itemId": item_id,
+                "productName": "Produto",
+                "offerLink": "https://s.shopee.com.br/approved",
+            }
 
     client = ProductionClient()
-    monkeypatch.delenv("ARMORED_SHOPEE_QUERIES_AUTHORIZED", raising=False)
+    for name in (
+        "ARMORED_SHOPEE_QUERY_BUDGET_ID", "ARMORED_SHOPEE_QUERY_LIMIT",
+        "ARMORED_SHOPEE_QUOTA_EVIDENCE", "ARMORED_SHOPEE_QUOTA_VALID_UNTIL",
+        "ARMORED_SHOPEE_QUERY_LEDGER_PATH",
+    ):
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(
         "ArmoredVision.service.resolve_short_url",
         lambda *_args, **_kwargs: ShopeeResolvedLink(
@@ -95,7 +106,7 @@ def test_production_vision_fails_closed_without_quota_authorization(
             "https://shopee.com.br/product/10/20", "10", "20",
         ),
     )
-    with pytest.raises(VisionUnresolvedError, match="SHOPEE_QUERY_BUDGET_BLOCKED"):
+    with pytest.raises(VisionUnresolvedError, match="QUERY_BUDGET_UNAVAILABLE"):
         ArmoredVision(api=client, db=db).identify(db.get(content_id))
     assert client.calls == 0
     db.close()
@@ -111,18 +122,20 @@ def test_live_vision_charges_lookup_and_short_link_as_separate_requests(
     from ArmoredVision.service import ArmoredVision
     from armored_core.database import Database
     from armored_core.services import VisionUnresolvedError
+    from datetime import datetime, timedelta, timezone
 
     db = Database(tmp_path / "items.sqlite3")
     content_id = db.reserve_item(
         "3", source_id="source", original_url="https://shopee.com.br/product/10/20",
         original_path=tmp_path / "original.mp4",
     )
-    monkeypatch.setenv("ARMORED_SHOPEE_QUERIES_AUTHORIZED", "1")
-    monkeypatch.setenv("ARMORED_SHOPEE_QUERY_BUDGET_ID", "certification-small")
-    monkeypatch.setenv("ARMORED_SHOPEE_QUERY_LIMIT", "1")
-    monkeypatch.setenv("ARMORED_SHOPEE_QUOTA_EVIDENCE", "test-only approved budget")
-    monkeypatch.setenv("ARMORED_SHOPEE_QUOTA_VALID_UNTIL", _expiry())
-    monkeypatch.delenv("ARMORED_SHOPEE_QUERY_LEDGER_PATH", raising=False)
+    budget_path = tmp_path / "shopee-query-budget.sqlite3"
+    expiry = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    monkeypatch.setenv("ARMORED_SHOPEE_QUERY_BUDGET_ID", "vision-test-budget")
+    monkeypatch.setenv("ARMORED_SHOPEE_QUERY_LIMIT", "2")
+    monkeypatch.setenv("ARMORED_SHOPEE_QUOTA_EVIDENCE", "isolated-test-authorization")
+    monkeypatch.setenv("ARMORED_SHOPEE_QUOTA_VALID_UNTIL", expiry)
+    monkeypatch.setenv("ARMORED_SHOPEE_QUERY_LEDGER_PATH", str(budget_path))
     monkeypatch.setattr(
         "ArmoredVision.service.resolve_short_url",
         lambda *_args, **_kwargs: ShopeeResolvedLink(
@@ -154,10 +167,13 @@ def test_live_vision_charges_lookup_and_short_link_as_separate_requests(
         return Response({"data": {"generateShortLink": {"shortLink": "https://s.shopee.com.br/test"}}})
     monkeypatch.setattr(api.session, "post", post)
 
-    with pytest.raises(VisionUnresolvedError, match="SHOPEE_QUERY_BUDGET_BLOCKED"):
-        ArmoredVision(api=api, db=db).identify(db.get(content_id))
-    assert len(calls) == 1
-    with __import__("sqlite3").connect(tmp_path / "shopee-query-budget.sqlite3") as ledger:
-        assert ledger.execute("SELECT used FROM budgets WHERE budget_id='certification-small'").fetchone()[0] == 1
+    result = ArmoredVision(api=api, db=db).identify(db.get(content_id))
+    assert result.affiliate_url == "https://s.shopee.com.br/test"
+    assert len(calls) == 2
+    budget = sqlite3.connect(budget_path)
+    assert budget.execute(
+        "SELECT request_limit,used FROM budgets WHERE budget_id='vision-test-budget'"
+    ).fetchone() == (2, 2)
+    budget.close()
     api.close()
     db.close()

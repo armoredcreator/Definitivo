@@ -25,6 +25,7 @@ def test_product_lookup_reuses_successful_result_in_client_lifetime(monkeypatch)
                     "shopId": "123",
                     "itemId": "456",
                     "productName": "Produto",
+                    "productCatIds": [1001, 1002],
                     "offerLink": "https://s.shopee.com.br/affiliate",
                 }]
             }
@@ -36,7 +37,9 @@ def test_product_lookup_reuses_successful_result_in_client_lifetime(monkeypatch)
     second = api.get_exact_product("123", "456")
 
     assert first == second
+    assert first["productCatIds"] == [1001, 1002]
     assert api.session.post.call_count == 1
+    assert "productCatIds" in api.session.post.call_args.kwargs["data"].decode()
     api.close()
 
 

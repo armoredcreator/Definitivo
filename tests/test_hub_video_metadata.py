@@ -18,9 +18,9 @@ def _item(result_path: Path) -> Item:
         original_path=result_path,
         working_path=result_path,
         result_path=result_path,
-        affiliate_name="radio automotivo",
+        affiliate_name="radio automotivo com Bluetooth",
         affiliate_url="https://s.shopee.com.br/test",
-        publication_caption="🧡 Radio bonito\n#radio",
+        publication_caption="🧡 Conexão Bluetooth\n#radio",
     )
 
 

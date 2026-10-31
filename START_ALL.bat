@@ -58,6 +58,9 @@ if "%RUN_REQUESTED%"=="0" (
   exit /b %ERRORLEVEL%
 )
 
+rem Enable the deterministic, category-gated caption rules for normal runs.
+if not defined ARMORED_IA_CAPTION_TITLE_RULES set "ARMORED_IA_CAPTION_TITLE_RULES=1"
+
 echo [3/4] Validando as tres fontes e suas rotas...
 "%PYTHON%" "%ARMORED_ROOT%\scripts\run_coordinator.py" --root "%ARMORED_ROOT%" --validate-config
 if errorlevel 1 (

@@ -11,7 +11,7 @@ class CatchUpBudgetError(RuntimeError):
 
 
 class ContinuousOperationBudget:
-    """Installation-wide persistent daily allowance with resumable batches.
+    """Persistent resumable batches, optionally retaining a legacy daily cap.
 
     The ledger has one immutable configuration per file. Changing an operation
     ID cannot reset its daily usage. Batch IDs remain open across restarts and
@@ -23,7 +23,7 @@ class ContinuousOperationBudget:
         self,
         path: Path,
         operation_id: str,
-        max_items_per_day: int,
+        max_items_per_day: int | None,
         batch_size: int,
         *,
         now: Callable[[], datetime] | None = None,
@@ -36,14 +36,15 @@ class ContinuousOperationBudget:
         self._now = now or (lambda: datetime.now(timezone.utc))
         if not self.operation_id or len(self.operation_id) > 48:
             raise CatchUpBudgetError("continuous-operation-id-required-or-too-long")
-        if isinstance(max_items_per_day, bool) or not isinstance(max_items_per_day, int):
-            raise CatchUpBudgetError("continuous-daily-item-limit-must-be-an-integer")
-        if not 1 <= max_items_per_day <= 10000:
-            raise CatchUpBudgetError("continuous-daily-item-limit-must-be-1-to-10000")
+        if max_items_per_day is not None:
+            if isinstance(max_items_per_day, bool) or not isinstance(max_items_per_day, int):
+                raise CatchUpBudgetError("continuous-daily-item-limit-must-be-an-integer-or-none")
+            if not 1 <= max_items_per_day <= 10000:
+                raise CatchUpBudgetError("continuous-daily-item-limit-must-be-1-to-10000")
         if isinstance(batch_size, bool) or not isinstance(batch_size, int):
             raise CatchUpBudgetError("continuous-batch-size-must-be-an-integer")
-        if not 1 <= batch_size <= min(1000, max_items_per_day):
-            raise CatchUpBudgetError("continuous-batch-size-must-be-1-to-min-1000-daily-limit")
+        if not 1 <= batch_size <= min(1000, max_items_per_day or 1000):
+            raise CatchUpBudgetError("continuous-batch-size-must-be-1-to-1000")
         self.conn = sqlite3.connect(str(self.path), timeout=15, isolation_level=None)
         self.conn.execute("PRAGMA busy_timeout=15000")
         self.conn.execute("PRAGMA journal_mode=WAL")
@@ -65,7 +66,9 @@ class ContinuousOperationBudget:
                 "SELECT operation_id,max_items_per_day,batch_size "
                 "FROM continuous_operation_config WHERE singleton=1"
             ).fetchone()
-            config = (self.operation_id, self.max_items_per_day, self.batch_size)
+            # -1 is a durable sentinel for unlimited operation. Keep using the
+            # same ledger schema so batch history remains restart-safe.
+            config = (self.operation_id, self.max_items_per_day or -1, self.batch_size)
             if row is None:
                 self.conn.execute(
                     "INSERT INTO continuous_operation_config "
@@ -92,6 +95,8 @@ class ContinuousOperationBudget:
 
     @property
     def remaining(self) -> int:
+        if self.max_items_per_day is None:
+            return 2**31 - 1
         return max(0, self.max_items_per_day - self.used_today)
 
     def try_claim(self, content_id: str) -> bool:
@@ -109,7 +114,7 @@ class ContinuousOperationBudget:
             used = int(self.conn.execute(
                 "SELECT COUNT(*) FROM continuous_daily_items WHERE day=?", (day,)
             ).fetchone()[0])
-            if used >= self.max_items_per_day:
+            if self.max_items_per_day is not None and used >= self.max_items_per_day:
                 self.conn.commit()
                 return False
             self.conn.execute(
@@ -126,13 +131,16 @@ class ContinuousOperationBudget:
         day = self.day
         self.conn.execute("BEGIN IMMEDIATE")
         try:
-            self.conn.execute(
-                "UPDATE continuous_batches SET status='CLOSED' "
-                "WHERE status='OPEN' AND day<>?", (day,)
-            )
+            if self.max_items_per_day is not None:
+                self.conn.execute(
+                    "UPDATE continuous_batches SET status='CLOSED' "
+                    "WHERE status='OPEN' AND day<>?", (day,)
+                )
             row = self.conn.execute(
                 "SELECT run_id,item_limit FROM continuous_batches "
-                "WHERE day=? AND status='OPEN' ORDER BY sequence DESC LIMIT 1", (day,)
+                + ("WHERE day=? AND status='OPEN' " if self.max_items_per_day is not None else "WHERE status='OPEN' ")
+                + "ORDER BY sequence DESC LIMIT 1",
+                (day,) if self.max_items_per_day is not None else (),
             ).fetchone()
             if row is not None:
                 self.conn.commit()
@@ -140,7 +148,11 @@ class ContinuousOperationBudget:
             used = int(self.conn.execute(
                 "SELECT COUNT(*) FROM continuous_daily_items WHERE day=?", (day,)
             ).fetchone()[0])
-            allowance = self.max_items_per_day - used
+            allowance = (
+                self.max_items_per_day - used
+                if self.max_items_per_day is not None
+                else self.batch_size
+            )
             if allowance <= 0:
                 self.conn.commit()
                 return None

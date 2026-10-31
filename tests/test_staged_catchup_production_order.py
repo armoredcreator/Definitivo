@@ -83,15 +83,15 @@ class Vision:
         if not item.original_url:
             raise VisionUnresolvedError("no exact product offer")
         return VisionResult(
-            "radio automotivo",
+            "radio automotivo com Bluetooth",
             f"https://affiliate.example/offer-{item.telegram_message_id}",
-            ia_context={"productName": "radio automotivo"},
+            ia_context={"productName": "radio automotivo com Bluetooth"},
         )
 
 
 class ValidIA:
     def generate_caption(self, _context):
-        return "🧡 Radio bonito\n#radio"
+        return "🧡 Conexão Bluetooth\n#radio"
 
     def generate_caption_with_evidence(self, context):
         from ArmoredIA.caption.generator import CaptionGenerationResult

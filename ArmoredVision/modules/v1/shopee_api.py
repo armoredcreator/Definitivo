@@ -74,7 +74,7 @@ class ShopeeProductNotFoundError(ShopeeAPIError):
 PRODUCT_OFFER_QUERY = """
 query ProductOffer($itemId: Int64, $shopId: Int64, $page: Int, $limit: Int) {
   productOfferV2(itemId: $itemId, shopId: $shopId, page: $page, limit: $limit) {
-    nodes { itemId commissionRate commission price sales imageUrl productName shopName productLink offerLink ratingStar shopId }
+    nodes { itemId commissionRate commission price sales imageUrl productName productCatIds shopName productLink offerLink ratingStar shopId }
   }
 }
 """

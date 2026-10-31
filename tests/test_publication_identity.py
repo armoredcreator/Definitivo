@@ -13,8 +13,8 @@ from armored_core.storage import Storage
 class Vision:
     def identify(self, item):
         return VisionResult(
-            "radio automotivo", "https://example.invalid/affiliate",
-            ia_context={"productName": "radio automotivo"},
+            "radio automotivo com Bluetooth", "https://example.invalid/affiliate",
+            ia_context={"productName": "radio automotivo com Bluetooth"},
         )
 
 
@@ -74,12 +74,12 @@ class PublicationIdentityTests(unittest.TestCase):
     def _prepare_publishing(self):
         item = self.db.get(self.item)
         self.db.set_vision(
-            self.item, "radio automotivo", "https://example.invalid/affiliate",
-            ia_context={"productName": "radio automotivo"},
-            publication_caption="🧡 Radio bonito\n#radio",
+            self.item, "radio automotivo com Bluetooth", "https://example.invalid/affiliate",
+            ia_context={"productName": "radio automotivo com Bluetooth"},
+            publication_caption="🧡 Conexão Bluetooth\n#radio",
         )
         result = self.storage.result(
-            self.item, "https://example.invalid/affiliate", "radio automotivo"
+            self.item, "https://example.invalid/affiliate", "radio automotivo com Bluetooth"
         )
         result.write_bytes(item.original_path.read_bytes())
         self.db.set_result(self.item, result)

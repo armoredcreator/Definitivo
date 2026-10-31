@@ -11,14 +11,14 @@ from armored_core.storage import Storage
 class Vision:
     def identify(self, item):
         return VisionResult(
-            "radio automotivo", "https://example.invalid/a",
-            ia_context={"productName": "radio automotivo"},
+            "radio automotivo com Bluetooth", "https://example.invalid/a",
+            ia_context={"productName": "radio automotivo com Bluetooth"},
         )
 
 
 class ValidIA:
     def generate_caption(self, _context):
-        return "🧡 Radio bonito\n#radio"
+        return "🧡 Conexão Bluetooth\n#radio"
 
 class Studio:
     def __init__(self, storage):
@@ -99,8 +99,8 @@ class PipelineTests(unittest.TestCase):
                 self.calls = 0
             def generate_caption(self, context):
                 self.calls += 1
-                assert context["productName"] == "radio automotivo"
-                return "🧡 Radio bonito\n#radio"
+                assert context["productName"] == "radio automotivo com Bluetooth"
+                return "🧡 Conexão Bluetooth\n#radio"
 
         ia = IA()
         import os
@@ -112,9 +112,9 @@ class PipelineTests(unittest.TestCase):
         class VisionWithContext:
             def identify(self, item):
                 return VisionResult(
-                    "radio automotivo",
+                    "radio automotivo com Bluetooth",
                     "https://example.invalid/a",
-                    ia_context={"productName": "radio automotivo"},
+                    ia_context={"productName": "radio automotivo com Bluetooth"},
                 )
 
         try:
@@ -129,7 +129,7 @@ class PipelineTests(unittest.TestCase):
             p.run(self.item)
             row = self.db.get(self.item)
             self.assertEqual(row.state, State.PUBLISHED)
-            self.assertEqual(row.publication_caption, "🧡 Radio bonito\n#radio")
+            self.assertEqual(row.publication_caption, "🧡 Conexão Bluetooth\n#radio")
             self.assertEqual(ia.calls, 1)
         finally:
             if old_enabled is None:

@@ -10,12 +10,12 @@ from armored_core.storage import Storage
 class V:
     def identify(self,item):
         return VisionResult(
-            "radio automotivo", "https://example.invalid",
-            ia_context={"productName": "radio automotivo"},
+            "radio automotivo com Bluetooth", "https://example.invalid",
+            ia_context={"productName": "radio automotivo com Bluetooth"},
         )
 
 class IA:
-    def generate_caption(self, _context): return "🧡 Radio bonito\n#radio"
+    def generate_caption(self, _context): return "🧡 Conexão Bluetooth\n#radio"
 
 class S:
     def __init__(self,s): self.s=s

@@ -184,13 +184,12 @@ def test_invalid_budget_fails_before_network(monkeypatch, key, value):
     assert calls == []
 
 
-def test_503_failure_then_restart_preserves_vision_original_and_state(tmp_path, monkeypatch):
+def test_local_caption_preserves_vision_original_without_calling_provider(tmp_path, monkeypatch):
     from ArmoredIA.caption.generator import CaptionGenerator
     from ArmoredIA.service import ArmoredIA
     from armored_core.database import Database
     from armored_core.models import State
     from armored_core.pipeline import Pipeline
-    from armored_core.recovery import Recovery
     from armored_core.services import SyncService
     from armored_core.storage import Storage
 
@@ -201,34 +200,39 @@ def test_503_failure_then_restart_preserves_vision_original_and_state(tmp_path, 
     monkeypatch.setenv("ARMORED_IA_MAX_ATTEMPTS", "2")
     monkeypatch.setenv("ARMORED_IA_ENABLED", "1")
     monkeypatch.setenv("ARMORED_IA_CAPTION_ENABLED", "1")
+    monkeypatch.setenv("ARMORED_IA_PROVIDER", "ollama")
     storage = Storage(tmp_path)
     database_path = storage.database / "isolated.sqlite3"
     db = Database(database_path)
     source = tmp_path / "source.mp4"
     source.write_bytes(b"preserved historical original")
     item_id = SyncService(db, storage).ingest(source, "100", source_id="source-test")
-    db.set_vision(item_id, "Product", "https://affiliate.invalid/product", ia_context={"productName": "Product", "category": "casa", "shopId": "10", "itemId": "20"})
+    db.set_vision(item_id, "Product", "https://affiliate.invalid/product", ia_context={
+        "productName": "Product", "category": "casa",
+        "description": "organização da casa", "shopId": "10", "itemId": "20",
+    })
     original_path = db.get(item_id).original_path
-    client, _, calls = provider([Response(503), Response(503), Response()])
+    client, _, calls = provider([Response(503)])
     service = ArmoredIA(CaptionGenerator(provider=client))
     pipeline = Pipeline(db, storage, Forbidden(), Forbidden(), Forbidden(), service)
-    with pytest.raises(AIProviderError):
-        pipeline.run(item_id, stop_after_ia=True)
-    assert db.get(item_id).state is State.RECOVERY
-    assert not db.get(item_id).publication_caption
+    pipeline.run(item_id, stop_after_ia=True)
+    assert db.get(item_id).state is State.SPEECH
+    assert db.get(item_id).publication_caption.startswith("🧡 ")
     assert db.publication(item_id) is None
+    assert calls == []
+    attempt = db.conn.execute(
+        "SELECT provider,request_count,status FROM ia_generation_attempts WHERE content_id=?",
+        (item_id,),
+    ).fetchone()
+    assert tuple(attempt) == ("local", 0, "COMPLETE")
     db.close()
 
     db = Database(database_path)
-    speech_boundary = []
     try:
-        recovery = Recovery(db, storage, Forbidden(), Forbidden(), Forbidden(), service, speech_studio_runner=speech_boundary.append)
-        recovery.reconcile(item_id)
         item = db.get(item_id)
         assert item.state is State.SPEECH
-        assert item.publication_caption == "🧡 Casa bonita\n#casa"
-        assert speech_boundary == [item_id]
-        assert len(calls) == 3
+        assert item.publication_caption.startswith("🧡 ")
+        assert calls == []
         assert item.original_path == original_path
         assert original_path.read_bytes() == b"preserved historical original"
         assert db.publication(item_id) is None

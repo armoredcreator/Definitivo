@@ -17,9 +17,9 @@ from ArmoredSpeech.contracts import AudioClass, SpeechDecision
 class _Vision:
     def identify(self, _item):
         return VisionResult(
-            "radio automotivo",
+            "radio automotivo com Bluetooth",
             "https://affiliate.invalid/approved",
-            ia_context={"productName": "radio automotivo", "shopId": "700", "itemId": "800"},
+            ia_context={"productName": "radio automotivo com Bluetooth", "shopId": "700", "itemId": "800"},
         )
 
 
@@ -29,7 +29,7 @@ class _IA:
 
     def generate_caption(self, _context):
         self.events.append("ia")
-        return "🧡 Radio bonito\n#radio"
+        return "🧡 Conexão Bluetooth\n#radio"
 
     def generate_caption_with_evidence(self, _context):
         from ArmoredIA.caption.generator import CaptionGenerationResult
@@ -96,9 +96,9 @@ def _fixture(tmp_path: Path, events):
     item_id = SyncService(db, storage).ingest(source, "501", source_id="source1")
     db.set_vision(
         item_id,
-        "radio automotivo",
+        "radio automotivo com Bluetooth",
         "https://affiliate.invalid/approved",
-        ia_context={"productName": "radio automotivo", "shopId": "700", "itemId": "800"},
+        ia_context={"productName": "radio automotivo com Bluetooth", "shopId": "700", "itemId": "800"},
     )
     coordinator = Coordinator(
         db,
@@ -159,18 +159,20 @@ def test_coordinator_routes_normal_execution_through_speech_v5_before_studio_and
     monkeypatch.setenv("ARMORED_IA_CAPTION_ENABLED", "1")
     _install_test_speech_studio(coordinator, events, monkeypatch)
 
-    coordinator.run(item_id)
+    try:
+        coordinator.run(item_id)
 
-    current = db.get(item_id)
-    assert current.state is State.PUBLISHED
-    assert current.cleanup_completed is True
-    assert current.publication_caption == "🧡 Radio bonito\n#radio"
-    assert events.index("ia") < events.index("speech-analyze") < events.index("speech-prepare")
-    assert events.index("speech-prepare") < events.index("studio") < events.index("hub")
-    assert db.last_state_event(item_id)["new_state"] == State.PUBLISHED.value
-    assert coordinator._has_speech_studio_v5_completion(item_id)
-    assert current.original_path.read_bytes() == original_bytes
-    db.close()
+        current = db.get(item_id)
+        assert current.state is State.PUBLISHED
+        assert current.cleanup_completed is True
+        assert current.publication_caption == "🧡 Conexão Bluetooth\n#radio"
+        assert events.index("ia") < events.index("speech-analyze") < events.index("speech-prepare")
+        assert events.index("speech-prepare") < events.index("studio") < events.index("hub")
+        assert db.last_state_event(item_id)["new_state"] == State.PUBLISHED.value
+        assert coordinator._has_speech_studio_v5_completion(item_id)
+        assert current.original_path.read_bytes() == original_bytes
+    finally:
+        coordinator.close()
 
 
 def test_speech_failure_blocks_studio_and_publication_and_persists_recovery(
@@ -265,10 +267,10 @@ def test_catch_up_processes_each_video_sequentially_through_hub(
         )
         db.set_vision(
             item_id,
-                "radio automotivo",
+                "radio automotivo com Bluetooth",
             f"https://affiliate.invalid/item-{100 + index}",
             ia_context={
-                    "productName": "radio automotivo",
+                    "productName": "radio automotivo com Bluetooth",
                 "shopId": "700",
                 "itemId": str(800 + index),
             },
@@ -298,7 +300,7 @@ def test_catch_up_processes_each_video_sequentially_through_hub(
         def generate_caption(self, context):
             name = str((context or {}).get("productName", "unknown"))
             events.append(f"ia:{name}")
-            return "🧡 Radio bonito\n#radio"
+            return "🧡 Conexão Bluetooth\n#radio"
 
     class TraceSpeech:
         intelligence = SimpleNamespace(preflight=lambda: events.append("speech-preflight"))

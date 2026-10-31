@@ -119,8 +119,8 @@ class CandidateSource(TelegramSource):
 class Vision:
     def identify(self, item):
         return VisionResult(
-            "radio automotivo", "https://example.invalid/affiliate",
-            ia_context={"productName": "radio automotivo"},
+            "radio automotivo com Bluetooth", "https://example.invalid/affiliate",
+            ia_context={"productName": "radio automotivo com Bluetooth"},
         )
 
 
@@ -133,14 +133,14 @@ class FailOnceVision:
             self.failed = True
             raise RuntimeError("simulated-live-crash")
         return VisionResult(
-            "radio automotivo", "https://example.invalid/affiliate",
-            ia_context={"productName": "radio automotivo"},
+            "radio automotivo com Bluetooth", "https://example.invalid/affiliate",
+            ia_context={"productName": "radio automotivo com Bluetooth"},
         )
 
 
 class ValidIA:
     def generate_caption(self, _context):
-        return "🧡 Radio bonito\n#radio"
+        return "🧡 Conexão Bluetooth\n#radio"
 
     def generate_caption_with_evidence(self, context):
         from ArmoredIA.caption.generator import CaptionGenerationResult
@@ -965,8 +965,8 @@ class SyncLifecycleTests(unittest.TestCase):
             class InterruptingVision:
                 def identify(self, item):
                     return VisionResult(
-                        "radio automotivo", "https://example.invalid/affiliate",
-                        ia_context={"productName": "radio automotivo"},
+                        "radio automotivo com Bluetooth", "https://example.invalid/affiliate",
+                        ia_context={"productName": "radio automotivo com Bluetooth"},
                     )
 
             class InterruptingStudio:

@@ -43,6 +43,14 @@ class PublicationQuarantine:
                 " FOREIGN KEY(content_id) REFERENCES quarantined_publications(content_id));"
                 "CREATE INDEX IF NOT EXISTS idx_quarantine_resolutions_content"
                 " ON quarantine_resolutions(content_id,resolved_through_evidence_id);"
+                "CREATE TABLE IF NOT EXISTS quarantine_confirmations ("
+                " confirmation_id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                " content_id TEXT NOT NULL, resolved_through_evidence_id INTEGER NOT NULL,"
+                " confirmed_message_id TEXT NOT NULL, evidence_json TEXT NOT NULL,"
+                " confirmed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+                " FOREIGN KEY(content_id) REFERENCES quarantined_publications(content_id));"
+                "CREATE INDEX IF NOT EXISTS idx_quarantine_confirmations_content"
+                " ON quarantine_confirmations(content_id,resolved_through_evidence_id);"
             )
         finally:
             conn.close()
@@ -61,8 +69,12 @@ class PublicationQuarantine:
                 "WHERE q.content_id=? AND COALESCE(("
                 " SELECT MAX(e.evidence_id) FROM quarantine_evidence e "
                 " WHERE e.content_id=q.content_id),0) > COALESCE(("
-                " SELECT MAX(r.resolved_through_evidence_id) FROM quarantine_resolutions r "
-                " WHERE r.content_id=q.content_id),0)",
+                " SELECT MAX(value) FROM ("
+                "  SELECT MAX(r.resolved_through_evidence_id) AS value "
+                "  FROM quarantine_resolutions r WHERE r.content_id=q.content_id UNION ALL "
+                "  SELECT MAX(c.resolved_through_evidence_id) AS value "
+                "  FROM quarantine_confirmations c WHERE c.content_id=q.content_id"
+                " )),0)",
                 (str(content_id),),
             ).fetchone() is not None
         finally:
@@ -77,8 +89,12 @@ class PublicationQuarantine:
                     "SELECT q.content_id FROM quarantined_publications q "
                     "WHERE COALESCE((SELECT MAX(e.evidence_id) FROM quarantine_evidence e "
                     "WHERE e.content_id=q.content_id),0) > COALESCE(("
-                    "SELECT MAX(r.resolved_through_evidence_id) FROM quarantine_resolutions r "
-                    "WHERE r.content_id=q.content_id),0)"
+                    "SELECT MAX(value) FROM ("
+                    " SELECT MAX(r.resolved_through_evidence_id) AS value "
+                    " FROM quarantine_resolutions r WHERE r.content_id=q.content_id UNION ALL "
+                    " SELECT MAX(c.resolved_through_evidence_id) AS value "
+                    " FROM quarantine_confirmations c WHERE c.content_id=q.content_id"
+                    ")),0)"
                 )
             }
         finally:
@@ -146,18 +162,18 @@ class PublicationQuarantine:
                 "destination_chat_id,destination_topic_id FROM quarantined_publications "
                 "WHERE content_id=?", (content_id,),
             ).fetchone()
-            expected = (
-                key, status, row.get("published_message_id"), int(bool(row.get("confirmed"))),
-                row.get("destination_chat_id"), row.get("destination_topic_id"),
-            )
             active = conn.execute(
                 "SELECT COALESCE((SELECT MAX(evidence_id) FROM quarantine_evidence "
-                "WHERE content_id=?),0) > COALESCE((SELECT MAX(resolved_through_evidence_id) "
-                "FROM quarantine_resolutions WHERE content_id=?),0)",
-                (content_id, content_id),
+                "WHERE content_id=?),0) > COALESCE((SELECT MAX(value) FROM ("
+                "SELECT MAX(resolved_through_evidence_id) AS value "
+                "FROM quarantine_resolutions WHERE content_id=? UNION ALL "
+                "SELECT MAX(resolved_through_evidence_id) AS value "
+                "FROM quarantine_confirmations WHERE content_id=?)),0)",
+                (content_id, content_id, content_id),
             ).fetchone()[0]
-            if active and tuple(existing) != expected:
-                raise RuntimeError("quarantined-publication-receipt-snapshot-changed")
+            # The first receipt snapshot is immutable in quarantined_publications.
+            # Every later generation/observation is preserved in its own evidence
+            # row, so a new idempotency key must not overwrite or block that history.
             if not active:
                 snapshot["new_quarantine_cycle"] = True
             conn.execute(
@@ -165,6 +181,94 @@ class PublicationQuarantine:
                 "VALUES(?, 'UNKNOWN', ?)",
                 (content_id, json.dumps(snapshot, ensure_ascii=False, sort_keys=True)),
             )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def quarantine_confirmed_message_missing(
+        self,
+        item_id: str,
+        publication: Any,
+        *,
+        evidence: dict[str, Any] | None = None,
+    ) -> None:
+        """Fence a confirmed receipt whose exact Telegram message is missing.
+
+        A confirmed send remains immutable history. This separate observation
+        records that its message could not be fetched during an operator-
+        authorized recovery; a complete topic scan must still resolve absence
+        before a fresh publication generation can be opened.
+        """
+        content_id = str(item_id)
+        row = dict(publication)
+        status = str(row.get("verification_status") or "").strip().upper()
+        key = str(row.get("idempotency_key") or "").strip()
+        message_id = str(row.get("published_message_id") or "").strip()
+        if status != "CONFIRMED" or not bool(row.get("confirmed")) or not message_id:
+            raise ValueError("missing-message-quarantine-requires-confirmed-receipt")
+        if not key:
+            raise ValueError("missing-message-quarantine-requires-idempotency-key")
+        snapshot = {
+            "reason": "confirmed-message-missing-during-authorized-video-recovery",
+            "item_state": (evidence or {}).get("item_state"),
+            "original_receipt": {
+                "idempotency_key": key,
+                "verification_status": status,
+                "published_message_id": message_id,
+                "confirmed": 1,
+                "destination_chat_id": row.get("destination_chat_id"),
+                "destination_topic_id": row.get("destination_topic_id"),
+            },
+            "message_lookup": evidence or {},
+            "publication_check": "UNKNOWN_PENDING_COMPLETE_TOPIC_SCAN",
+        }
+        conn = self._connect()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute(
+                "INSERT OR IGNORE INTO quarantined_publications "
+                "(content_id,idempotency_key,original_status,original_message_id,"
+                "original_confirmed,destination_chat_id,destination_topic_id) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (
+                    content_id, key, status, message_id, 1,
+                    row.get("destination_chat_id"), row.get("destination_topic_id"),
+                ),
+            )
+            existing = conn.execute(
+                "SELECT idempotency_key,original_status,original_message_id,original_confirmed,"
+                "destination_chat_id,destination_topic_id FROM quarantined_publications "
+                "WHERE content_id=?", (content_id,),
+            ).fetchone()
+            expected = (
+                key, status, message_id, 1,
+                row.get("destination_chat_id"), row.get("destination_topic_id"),
+            )
+            if tuple(existing or ()) != expected:
+                raise RuntimeError("missing-message-quarantine-receipt-snapshot-changed")
+            active = conn.execute(
+                "SELECT COALESCE((SELECT MAX(evidence_id) FROM quarantine_evidence "
+                "WHERE content_id=?),0) > COALESCE((SELECT MAX(value) FROM ("
+                "SELECT MAX(resolved_through_evidence_id) AS value "
+                "FROM quarantine_resolutions WHERE content_id=? UNION ALL "
+                "SELECT MAX(resolved_through_evidence_id) AS value "
+                "FROM quarantine_confirmations WHERE content_id=?)),0)",
+                (content_id, content_id, content_id),
+            ).fetchone()[0]
+            serialized = json.dumps(snapshot, ensure_ascii=False, sort_keys=True)
+            latest = conn.execute(
+                "SELECT evidence_json FROM quarantine_evidence WHERE content_id=? "
+                "ORDER BY evidence_id DESC LIMIT 1", (content_id,),
+            ).fetchone()
+            if not active or latest is None or str(latest[0]) != serialized:
+                conn.execute(
+                    "INSERT INTO quarantine_evidence(content_id,observed_outcome,evidence_json) "
+                    "VALUES(?, 'UNKNOWN', ?)",
+                    (content_id, serialized),
+                )
             conn.commit()
         except BaseException:
             conn.rollback()
@@ -204,9 +308,12 @@ class PublicationQuarantine:
             ).fetchone()
             active = conn.execute(
                 "SELECT COALESCE((SELECT MAX(evidence_id) FROM quarantine_evidence "
-                "WHERE content_id=?),0) > COALESCE((SELECT MAX(resolved_through_evidence_id) "
-                "FROM quarantine_resolutions WHERE content_id=?),0)",
-                (content_id, content_id),
+                "WHERE content_id=?),0) > COALESCE((SELECT MAX(value) FROM ("
+                "SELECT MAX(resolved_through_evidence_id) AS value "
+                "FROM quarantine_resolutions WHERE content_id=? UNION ALL "
+                "SELECT MAX(resolved_through_evidence_id) AS value "
+                "FROM quarantine_confirmations WHERE content_id=?)),0)",
+                (content_id, content_id, content_id),
             ).fetchone()[0]
             if active and tuple(existing) != (key, "LEGACY_RECEIPT_MISSING", None, 0):
                 raise RuntimeError("legacy-quarantine-snapshot-changed")
@@ -304,6 +411,75 @@ class PublicationQuarantine:
             resolution_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
             conn.commit()
             return resolution_id
+        except BaseException:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def resolve_confirmed(
+        self,
+        item_id: str,
+        *,
+        message_id: str,
+        evidence: dict[str, Any],
+    ) -> int:
+        """Clear a fence only after the exact Telegram message ID is verified.
+
+        This path reconciles a timed-out send when its message ID becomes
+        available later. It records confirmation evidence and never authorizes
+        or performs another send.
+        """
+        content_id = str(item_id)
+        exact_id = str(message_id or "").strip()
+        if not exact_id or not isinstance(evidence, dict):
+            raise ValueError("confirmed-reconciliation-requires-exact-message-id-and-evidence")
+        if evidence.get("method") != "telegram_exact_message_verification":
+            raise ValueError("confirmed-reconciliation-requires-exact-id-verification")
+        if evidence.get("checked_content_id") != content_id:
+            raise ValueError("confirmed-reconciliation-content-id-mismatch")
+        if str(evidence.get("checked_message_id") or "") != exact_id:
+            raise ValueError("confirmed-reconciliation-message-id-mismatch")
+        if evidence.get("confirmed") is not True:
+            raise ValueError("confirmed-reconciliation-requires-positive-telegram-proof")
+
+        conn = self._connect()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            if conn.execute(
+                "SELECT 1 FROM quarantined_publications WHERE content_id=?",
+                (content_id,),
+            ).fetchone() is None:
+                raise KeyError(content_id)
+            latest = int(conn.execute(
+                "SELECT COALESCE(MAX(evidence_id),0) FROM quarantine_evidence WHERE content_id=?",
+                (content_id,),
+            ).fetchone()[0])
+            resolved = int(conn.execute(
+                "SELECT MAX(value) FROM ("
+                " SELECT COALESCE(MAX(resolved_through_evidence_id),0) AS value "
+                " FROM quarantine_resolutions WHERE content_id=? UNION ALL "
+                " SELECT COALESCE(MAX(resolved_through_evidence_id),0) AS value "
+                " FROM quarantine_confirmations WHERE content_id=? )",
+                (content_id, content_id),
+            ).fetchone()[0] or 0)
+            if latest <= resolved:
+                conn.commit()
+                return 0
+            conn.execute(
+                "INSERT INTO quarantine_confirmations "
+                "(content_id,resolved_through_evidence_id,confirmed_message_id,evidence_json) "
+                "VALUES(?,?,?,?)",
+                (
+                    content_id,
+                    latest,
+                    exact_id,
+                    json.dumps(evidence, ensure_ascii=False, sort_keys=True),
+                ),
+            )
+            confirmation_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+            conn.commit()
+            return confirmation_id
         except BaseException:
             conn.rollback()
             raise

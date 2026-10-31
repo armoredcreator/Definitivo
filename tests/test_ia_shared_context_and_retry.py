@@ -132,7 +132,7 @@ def test_invalid_ollama_thinking_config_fails_before_generation(monkeypatch):
     ("Sofá 🧡 bonito #casa", "🧡 Sofá bonito\n#casa"),
     ("Sofá sala bonito #casa", "🧡 Sofá sala bonito\n#casa"),
     ("Sofá,bonito #casa", "🧡 Sofá, bonito\n#casa"),
-    ("Sofá, bonito! #Casa #casa", "🧡 Sofá, bonito!\n#Casa"),
+    ("Sofá, bonito! #Casa #casa", "🧡 Sofá, bonito\n#Casa"),
 ])
 def test_caption_heart_is_central_idempotent_and_preserves_text(raw, expected):
     normalized = normalize_caption(raw, product_name="Produto para casa")

@@ -48,14 +48,14 @@ class IncrementalSource:
 class Vision:
     def identify(self, item):
         return VisionResult(
-            "radio automotivo", "https://shopee.com.br/affiliate/final",
-            ia_context={"productName": "radio automotivo"},
+            "radio automotivo com Bluetooth", "https://shopee.com.br/affiliate/final",
+            ia_context={"productName": "radio automotivo com Bluetooth"},
         )
 
 
 class IA:
     def generate_caption(self, _context):
-        return "🧡 Radio bonito\n#radio"
+        return "🧡 Conexão Bluetooth\n#radio"
 
 
 class Studio:
@@ -129,15 +129,17 @@ class IncrementalCoordinatorTests(unittest.TestCase):
             coordinator = Coordinator(db, storage, Vision(), Studio(storage), publisher, source, ia=IA())
             install_synthetic_speech_studio(coordinator)
 
-            processed = coordinator.run_catch_up()
+            try:
+                processed = coordinator.run_catch_up()
 
-            self.assertEqual(processed, ["telegram-1", "telegram-2"])
-            self.assertEqual(source.marked, ["telegram-1", "telegram-2"])
-            self.assertTrue(db.historical_complete())
-            self.assertEqual(db.get("telegram-1").state, State.PUBLISHED)
-            self.assertEqual(db.get("telegram-2").state, State.PUBLISHED)
-            self.assertEqual(publisher.published, ["telegram-1", "telegram-2"])
-            coordinator.close()
+                self.assertEqual(processed, ["telegram-1", "telegram-2"])
+                self.assertEqual(source.marked, ["telegram-1", "telegram-2"])
+                self.assertTrue(db.historical_complete())
+                self.assertEqual(db.get("telegram-1").state, State.PUBLISHED)
+                self.assertEqual(db.get("telegram-2").state, State.PUBLISHED)
+                self.assertEqual(publisher.published, ["telegram-1", "telegram-2"])
+            finally:
+                coordinator.close()
 
 
     def test_real_source_materializes_one_candidate_before_processing(self):

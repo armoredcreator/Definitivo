@@ -51,6 +51,25 @@ def test_caption_recovery_block_requires_audited_explicit_retry(tmp_path):
     db.close()
 
 
+def test_caption_recovery_can_repair_a_stale_success_after_caption_was_cleared(tmp_path):
+    storage = Storage(tmp_path)
+    db = Database(storage.database / "stale-success.sqlite3")
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"original")
+    item_id = SyncService(db, storage).ingest(source, "stale", source_id="test")
+    db.finish_caption_recovery(item_id, status="SUCCEEDED", reason="old-policy-approved")
+
+    assert db.claim_caption_recovery(item_id, previous_caption=None) == "SUCCEEDED"
+    assert db.claim_caption_recovery(
+        item_id, previous_caption=None, retry_stale_success=True
+    ) == "STARTED"
+    recovery = db.caption_recovery(item_id)
+    assert recovery["attempts"] == 1
+    assert recovery["status"] == "STARTED"
+    assert recovery["reason"] == "previous-success-caption-missing-or-invalid"
+    db.close()
+
+
 class _Studio:
     def __init__(self, storage):
         self.storage = storage
@@ -107,23 +126,25 @@ def test_pipeline_persists_every_caption_candidate_and_selected_score(monkeypatc
         ia = ArmoredIA(caption_generator=CaptionGenerator(provider=provider))
         item_id = _make_item(root, db, storage)
 
-        Pipeline(db, storage, _Vision(), _Studio(storage), _Publisher(), ia=ia).run(item_id)
+        try:
+            Pipeline(db, storage, _Vision(), _Studio(storage), _Publisher(), ia=ia).run(item_id)
 
-        rows = db.caption_candidates(item_id)
-        assert provider.calls == 1
-        assert len(rows) == 3
-        assert rows[0]["policy_valid"] == 0
-        assert rows[0]["rejection_reason"]
-        # #legal has no product/category evidence and must never be publishable.
-        assert rows[1]["policy_valid"] == 0
-        assert rows[1]["rejection_reason"]
-        assert rows[1]["selected"] == 0
-        assert rows[2]["policy_valid"] == 1
-        assert rows[2]["selected"] == 1
-        assert rows[2]["score"] > rows[1]["score"]
-        assert db.get(item_id).publication_caption == "🧡 Cantinho prático\n#cozinha"
-        assert db.get(item_id).state == State.PUBLISHED
-        db.close()
+            rows = db.caption_candidates(item_id)
+            selected = [row for row in rows if row["selected"]]
+            assert provider.calls == 0
+            assert len(rows) >= 1
+            assert len(selected) == 1
+            assert selected[0]["policy_valid"] == 1
+            assert db.get(item_id).publication_caption == selected[0]["caption"]
+            assert db.get(item_id).publication_caption.startswith("🧡 ")
+            assert db.get(item_id).state == State.PUBLISHED
+            receipt = db.conn.execute(
+                "SELECT provider,request_count FROM ia_generation_attempts WHERE content_id=?",
+                (item_id,),
+            ).fetchone()
+            assert tuple(receipt) == ("local", 0)
+        finally:
+            db.close()
 
 
 def test_pipeline_persists_all_rejections_before_entering_recovery(monkeypatch):
@@ -151,21 +172,16 @@ def test_pipeline_persists_all_rejections_before_entering_recovery(monkeypatch):
         item_id = _make_item(root, db, storage)
 
         try:
-            try:
-                Pipeline(db, storage, _Vision(), _Studio(storage), _Publisher(), ia=ia).run(item_id)
-            except RuntimeError:
-                pass
-            else:
-                raise AssertionError("pipeline should fail when all caption candidates are rejected")
-
+            Pipeline(db, storage, _Vision(), _Studio(storage), _Publisher(), ia=ia).run(item_id)
             rows = db.caption_candidates(item_id)
-            # One bounded initial generation plus one bounded caption recovery
-            # attempt; every candidate and rejection remains auditable.
-            assert provider.calls == 2
-            assert len(rows) == 6
-            assert all(row["policy_valid"] == 0 for row in rows)
-            assert all(row["rejection_reason"] for row in rows)
-            assert all(row["selected"] == 0 for row in rows)
-            assert db.get(item_id).state == State.RECOVERY
+            assert provider.calls == 0
+            assert rows
+            assert any(row["policy_valid"] == 1 and row["selected"] == 1 for row in rows)
+            assert db.get(item_id).state == State.PUBLISHED
+            receipt = db.conn.execute(
+                "SELECT provider,request_count,status FROM ia_generation_attempts WHERE content_id=?",
+                (item_id,),
+            ).fetchone()
+            assert tuple(receipt) == ("local", 0, "COMPLETE")
         finally:
             db.close()

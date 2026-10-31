@@ -97,11 +97,80 @@ class Recovery:
 
     def reconcile(self, item_id: str) -> None:
         if self.publication_quarantine.contains(item_id):
+            publication = self.db.publication(item_id)
+            message_id = str(
+                publication["published_message_id"] if publication else ""
+            ).strip()
+            if message_id:
+                # A send timed out without an ID and was fenced. If a durable
+                # message ID appears later, verify that exact Telegram message
+                # read-only. Clear the fence only after a positive match.
+                try:
+                    item = self.db.get(item_id)
+                    check = self.pipeline.publisher.check_publication(item)
+                except Exception:
+                    return
+                if check == PublicationCheck.CONFIRMED:
+                    self.db.publication_confirmed(item_id, message_id)
+                    self.publication_quarantine.resolve_confirmed(
+                        item_id,
+                        message_id=message_id,
+                        evidence={
+                            "method": "telegram_exact_message_verification",
+                            "checked_content_id": str(item_id),
+                            "checked_message_id": message_id,
+                            "confirmed": True,
+                            "destination_chat_id": str(
+                                publication["destination_chat_id"] or ""
+                            ),
+                            "destination_topic_id": publication["destination_topic_id"],
+                        },
+                    )
+                    current = self.db.get(item_id)
+                    if current.state != State.PUBLISHED:
+                        self.db.transition(
+                            item_id,
+                            State.PUBLISHED,
+                            "quarantined-exact-telegram-message-confirmed",
+                        )
+                    self.pipeline.cleanup(item_id)
             return
         if self.db.caption_recovery_blocked(item_id):
             return
         item = self.db.get(item_id)
         starting_state = item.state
+
+        # A Telegram send can be durable locally while its remote outcome is
+        # still unknown. Fence that side-effect boundary before Recovery adds
+        # another RECOVERY event or increments the retry counter. Repeated
+        # START_ALL invocations must not turn one ambiguous send into an
+        # unbounded recovery loop or make it eligible for a second send.
+        publication = self.db.publication(item_id)
+        if publication is not None:
+            verification_status = str(
+                publication["verification_status"] or ""
+            ).strip().upper()
+            message_id = str(publication["published_message_id"] or "").strip()
+            if verification_status in {"SENT_UNVERIFIED", "UNKNOWN", "SENDING"} and not message_id:
+                self.publication_quarantine.quarantine_unknown(
+                    item_id,
+                    publication,
+                    evidence={
+                        "item_state": item.state.value,
+                        "last_state_event": (
+                            dict(self.db.last_state_event(item_id))
+                            if self.db.last_state_event(item_id) else None
+                        ),
+                        "reason": "recovery-found-unverified-telegram-send",
+                    },
+                )
+                if item.state != State.RECOVERY:
+                    self.db.transition(
+                        item_id,
+                        State.RECOVERY,
+                        "recovery-quarantined-unverified-telegram-send",
+                    )
+                return
 
         # Capture the failure evidence BEFORE Recovery writes its own
         # startup-recovery state event. Otherwise the evidence would be lost.
@@ -193,6 +262,18 @@ class Recovery:
 
             check = self.pipeline.publisher.check_publication(item)
             if check == PublicationCheck.UNKNOWN:
+                self.publication_quarantine.quarantine_unknown(
+                    item_id,
+                    pub,
+                    evidence={
+                        "item_state": item.state.value,
+                        "last_state_event": (
+                            dict(self.db.last_state_event(item_id))
+                            if self.db.last_state_event(item_id) else None
+                        ),
+                        "reason": "recovery-publication-check-remained-unknown",
+                    },
+                )
                 raise RuntimeError("publication-check-uncertain-recovery-stopped")
 
             if check == PublicationCheck.CONFIRMED:

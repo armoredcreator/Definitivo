@@ -49,6 +49,30 @@ def test_deferred_schema_initialization_allows_runtime_lease_first(tmp_path):
         db.close()
 
 
+def test_coordinator_start_marks_unfinished_ia_receipts_interrupted(tmp_path):
+    db = Database(Path(tmp_path) / "armoredcreator.db")
+    try:
+        attempt_id = db.conn.execute(
+            "INSERT INTO ia_generation_attempts(content_id,provider,model,status) "
+            "VALUES('abandoned-item','ollama','qwen2.5:3b','STARTED')"
+        ).lastrowid
+        db.conn.commit()
+
+        db.acquire_runtime_lock("coordinator")
+
+        attempt = db.conn.execute(
+            "SELECT status,error_type,finished_at FROM ia_generation_attempts "
+            "WHERE attempt_id=?",
+            (attempt_id,),
+        ).fetchone()
+        assert attempt["status"] == "INTERRUPTED"
+        assert attempt["error_type"] == "coordinator-restarted"
+        assert attempt["finished_at"]
+    finally:
+        db.release_runtime_lock("coordinator")
+        db.close()
+
+
 def test_runtime_lock_reclaims_pid_reused_by_newer_process(tmp_path, monkeypatch):
     db = Database(Path(tmp_path) / "armoredcreator.db", initialize=False)
     try:

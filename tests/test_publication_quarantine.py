@@ -32,10 +32,10 @@ def _approved(
     )
     db.set_vision(
         item_id,
-        "radio automotivo",
+        "radio automotivo com Bluetooth",
         f"https://s.shopee.com.br/affiliate-{message_id}",
-        publication_caption="🧡 Radio bonito\n#radio",
-        ia_context={"shopId": "10", "itemId": message_id, "productName": "radio automotivo"},
+        publication_caption="🧡 Conexão Bluetooth\n#radio",
+        ia_context={"shopId": "10", "itemId": message_id, "productName": "radio automotivo com Bluetooth"},
     )
     if state != State.RECEIVED:
         db.transition(item_id, state, "fixture-prior-interruption")
@@ -112,6 +112,53 @@ def test_topic_scoped_absence_resolution_is_audited_and_later_unknown_reactivate
     finally:
         connection.close()
 
+
+def test_exact_message_confirmation_clears_unknown_fence_without_authorizing_resend(tmp_path):
+    quarantine = PublicationQuarantine(tmp_path / "publication-quarantine.sqlite3")
+    item_id = "-1003788989075_1041"
+    receipt = {
+        "idempotency_key": f"armoredcreator:content:{item_id}",
+        "verification_status": "SENT_UNVERIFIED",
+        "published_message_id": None,
+        "confirmed": 0,
+        "destination_chat_id": "-1004341972306",
+        "destination_topic_id": 228,
+    }
+    quarantine.quarantine_unknown(item_id, receipt, evidence={"item_state": "RECOVERY"})
+    assert quarantine.contains(item_id)
+
+    confirmation_id = quarantine.resolve_confirmed(
+        item_id,
+        message_id="1450",
+        evidence={
+            "method": "telegram_exact_message_verification",
+            "checked_content_id": item_id,
+            "checked_message_id": "1450",
+            "confirmed": True,
+            "destination_chat_id": "-1004341972306",
+            "destination_topic_id": 228,
+        },
+    )
+
+    assert confirmation_id > 0
+    assert not quarantine.contains(item_id)
+    import sqlite3
+    connection = sqlite3.connect(tmp_path / "publication-quarantine.sqlite3")
+    try:
+        assert connection.execute(
+            "SELECT confirmed_message_id FROM quarantine_confirmations "
+            "WHERE confirmation_id=?", (confirmation_id,),
+        ).fetchone() == ("1450",)
+    finally:
+        connection.close()
+
+    quarantine.quarantine_unknown(
+        item_id,
+        {**receipt, "idempotency_key": f"armoredcreator:content:{item_id}:next", "published_message_id": None},
+        evidence={"item_state": "RECOVERY", "reason": "later-unknown-cycle"},
+    )
+    assert quarantine.contains(item_id)
+
     # A subsequent ambiguous send appends new evidence after the resolution;
     # the durable fence becomes active again without replacing the first receipt.
     next_receipt = {**receipt, "verification_status": "SENT_UNVERIFIED", "published_message_id": "1400", "confirmed": 0}
@@ -119,6 +166,54 @@ def test_topic_scoped_absence_resolution_is_audited_and_later_unknown_reactivate
     assert quarantine.contains(item_id)
     assert quarantine.unresolved_count() == 1
     assert quarantine.quarantined_ids() == {item_id}
+
+
+def test_confirmed_but_missing_video_receipt_is_preserved_until_complete_scan(tmp_path):
+    quarantine = PublicationQuarantine(tmp_path / "publication-quarantine.sqlite3")
+    item_id = "-1003788989075_1040"
+    receipt = {
+        "idempotency_key": f"armoredcreator:content:{item_id}",
+        "verification_status": "CONFIRMED",
+        "published_message_id": "1339",
+        "confirmed": 1,
+        "destination_chat_id": "-1004341972306",
+        "destination_topic_id": 228,
+    }
+    quarantine.quarantine_confirmed_message_missing(
+        item_id,
+        receipt,
+        evidence={"item_state": "PUBLISHED", "exact_message_fetch": "NOT_FOUND"},
+    )
+    assert quarantine.contains(item_id)
+
+    evidence = {
+        "method": "telegram_topic_history_scan",
+        "checked_content_id": item_id,
+        "chat_id": "-1004341972306",
+        "topic_id": 228,
+        "scan_complete": True,
+        "scanned_message_ids": ["1363", "1360", "228"],
+        "scanned_message_count": 3,
+        "checked_link_codes": ["source-code", "affiliate-code"],
+        "matched_message_ids": [],
+        "exact_receipt_id": "1339",
+        "exact_receipt_status": "ABSENT",
+        "operator_authorized": True,
+    }
+    resolution_id = quarantine.resolve_absent(item_id, evidence=evidence)
+    assert resolution_id > 0
+    assert not quarantine.contains(item_id)
+
+    import sqlite3
+    connection = sqlite3.connect(tmp_path / "publication-quarantine.sqlite3")
+    try:
+        row = connection.execute(
+            "SELECT original_status,original_message_id,original_confirmed "
+            "FROM quarantined_publications WHERE content_id=?", (item_id,),
+        ).fetchone()
+        assert row == ("CONFIRMED", "1339", 1)
+    finally:
+        connection.close()
 
 
 @pytest.mark.parametrize(

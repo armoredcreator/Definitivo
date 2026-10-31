@@ -23,15 +23,15 @@ class Source:
 class Vision:
     def identify(self, item):
         return VisionResult(
-            "radio automotivo",
+            "radio automotivo com Bluetooth",
             "https://example.invalid/affiliate",
-            ia_context={"productName": "radio automotivo"},
+            ia_context={"productName": "radio automotivo com Bluetooth"},
         )
 
 
 class IA:
     def generate_caption(self, _context):
-        return "🧡 Radio bonito\n#radio"
+        return "🧡 Conexão Bluetooth\n#radio"
 
     def generate_caption_with_evidence(self, _context):
         from ArmoredIA.caption.generator import CaptionGenerationResult
@@ -227,8 +227,8 @@ class EndToEndRecoveryTests(unittest.TestCase):
                 def identify(self, item):
                     self.count += 1
                     return VisionResult(
-                        "radio automotivo", "https://example.invalid/affiliate-600",
-                        ia_context={"productName": "radio automotivo"},
+                        "radio automotivo com Bluetooth", "https://example.invalid/affiliate-600",
+                        ia_context={"productName": "radio automotivo com Bluetooth"},
                     )
 
             class CountingStudio:
@@ -249,15 +249,15 @@ class EndToEndRecoveryTests(unittest.TestCase):
             item = coordinator.db.get(item_id)
             coordinator.db.set_vision(
                 item_id,
-                "radio automotivo",
+                "radio automotivo com Bluetooth",
                 "https://example.invalid/affiliate-600",
-                ia_context={"productName": "radio automotivo"},
+                ia_context={"productName": "radio automotivo com Bluetooth"},
             )
 
             result = item.workspace / "600_result.mp4"
             result.write_bytes(b"READY-RESULT")
             coordinator.db.set_result(item_id, result)
-            coordinator.db.set_caption(item_id, "🧡 Radio bonito\n#radio")
+            coordinator.db.set_caption(item_id, "🧡 Conexão Bluetooth\n#radio")
             coordinator.db.transition(item_id, State.SPEECH, "test-v5-ready")
             coordinator.db.transition(item_id, State.STUDIO_BATCH, "test-v5-studio")
             coordinator.db.complete_speech_studio_batch({item_id: result})
@@ -308,11 +308,11 @@ class EndToEndRecoveryTests(unittest.TestCase):
             item_id = coordinator.ingest_once()
             coordinator.db.set_vision(
                 item_id,
-                "radio automotivo",
+                "radio automotivo com Bluetooth",
                 "https://example.invalid/affiliate-601",
-                ia_context={"productName": "radio automotivo"},
+                ia_context={"productName": "radio automotivo com Bluetooth"},
             )
-            coordinator.db.set_caption(item_id, "🧡 Radio bonito\n#radio")
+            coordinator.db.set_caption(item_id, "🧡 Conexão Bluetooth\n#radio")
             coordinator.db.transition(item_id, State.SPEECH, "test-v5-ready")
             coordinator.db.transition(item_id, State.STUDIO_BATCH, "test-v5-studio")
             coordinator.db.transition(item_id, State.RECOVERY, "speech-studio-v5-failed:StudioError")

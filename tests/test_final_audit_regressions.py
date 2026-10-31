@@ -20,14 +20,14 @@ from coordinator_test_support import install_synthetic_speech_studio
 class _Vision:
     def identify(self, item):
         return VisionResult(
-            "radio automotivo", "https://example.invalid/affiliate",
-            ia_context={"productName": "radio automotivo"},
+            "radio automotivo com Bluetooth", "https://example.invalid/affiliate",
+            ia_context={"productName": "radio automotivo com Bluetooth"},
         )
 
 
 class _IA:
     def generate_caption(self, _context):
-        return "🧡 Radio bonito\n#radio"
+        return "🧡 Conexão Bluetooth\n#radio"
 
 
 class _Studio:
@@ -389,15 +389,16 @@ class AuditRegressionTests(unittest.TestCase):
             finally:
                 db.close()
 
-    def test_ia_missing_key_is_provider_error(self):
+    def test_ia_without_gemini_key_does_not_invent_for_unknown_title(self):
         old_key = os.environ.pop("GEMINI_API_KEY", None)
         old_enabled = os.environ.get("ARMORED_IA_CAPTION_ENABLED")
         os.environ["ARMORED_IA_CAPTION_ENABLED"] = "1"
         try:
-            with self.assertRaisesRegex(Exception, "GEMINI_API_KEY ausente"):
-                CaptionGenerator(provider=GeminiProvider()).generate({
-                    "productName": "Produto"
-                })
+            with self.assertRaises(CaptionGenerationError):
+                CaptionGenerator(provider=GeminiProvider()).generate_with_evidence(
+                    {"productName": "Produto"},
+                    preserve_previous_caption=False,
+                )
         finally:
             os.environ.pop("ARMORED_IA_CAPTION_ENABLED", None)
             if old_enabled is not None:

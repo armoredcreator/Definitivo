@@ -7,6 +7,7 @@ from armored_core.database import Database
 from armored_core.models import PublicationCheck, State
 from armored_core.pipeline import Pipeline
 from armored_core.recovery import Recovery
+from armored_core.publication_quarantine import PublicationQuarantine
 from armored_core.services import PublicationResult, StudioResult, SyncService, VisionResult
 from armored_core.storage import Storage
 
@@ -14,14 +15,14 @@ from armored_core.storage import Storage
 class Vision:
     def identify(self, item):
         return VisionResult(
-            "radio automotivo", "https://example.invalid/a",
-            ia_context={"productName": "radio automotivo"},
+            "radio automotivo com Bluetooth", "https://example.invalid/a",
+            ia_context={"productName": "radio automotivo com Bluetooth"},
         )
 
 
 class ValidIA:
     def generate_caption(self, _context):
-        return "🧡 Radio bonito\n#radio"
+        return "🧡 Conexão Bluetooth\n#radio"
 
     def generate_caption_with_evidence(self, context):
         from ArmoredIA.caption.generator import CaptionGenerationResult
@@ -70,8 +71,8 @@ class VisionWaitThenResolve:
             from armored_core.services import VisionUnresolvedError
             raise VisionUnresolvedError("simulated unresolved vision")
         return VisionResult(
-            "radio automotivo", "https://example.invalid/a",
-            ia_context={"productName": "radio automotivo"},
+            "radio automotivo com Bluetooth", "https://example.invalid/a",
+            ia_context={"productName": "radio automotivo com Bluetooth"},
         )
 
 
@@ -158,7 +159,7 @@ class RecoveryTests(unittest.TestCase):
             def __init__(self):
                 self.calls = 0
                 self.context = {
-                    "productName": "radio automotivo",
+                    "productName": "radio automotivo com Bluetooth",
                     "affiliate_links": ["https://shopee.com.br/item"],
                     "source": "vision-v1",
                 }
@@ -180,7 +181,7 @@ class RecoveryTests(unittest.TestCase):
                 if self.calls == 1:
                     raise RuntimeError("simulated-ia-crash")
                 self.context_seen = dict(product_context)
-                return "🧡 Radio bonito\n#radio"
+                return "🧡 Conexão Bluetooth\n#radio"
 
             def generate_caption_with_evidence(self, product_context):
                 from ArmoredIA.caption.generator import CaptionGenerationResult
@@ -242,7 +243,7 @@ class RecoveryTests(unittest.TestCase):
             self.assertEqual(vision.calls, 1)
             self.assertEqual(ia.calls, 2)
             self.assertEqual(ia.context_seen, vision.context)
-            self.assertEqual(recovered.publication_caption, "🧡 Radio bonito\n#radio")
+            self.assertEqual(recovered.publication_caption, "🧡 Conexão Bluetooth\n#radio")
             self.assertEqual(publisher.count, 1)
         finally:
             if previous_ia is None:
@@ -380,11 +381,57 @@ class RecoveryTests(unittest.TestCase):
         self.assertTrue(row.result_path.is_file())
         self.assertEqual(publisher.count, 0)
 
-        with self.assertRaisesRegex(RuntimeError, "publication-check-uncertain-recovery-stopped"):
-            Recovery(self.db, self.storage, vision, studio, publisher).reconcile(self.item)
-
+        Recovery(self.db, self.storage, vision, studio, publisher).reconcile(self.item)
         self.assertEqual(self.db.get(self.item).state, State.RECOVERY)
         self.assertEqual(publisher.count, 0)
+        quarantine = PublicationQuarantine(
+            self.storage.database / "publication-quarantine.sqlite3"
+        )
+        self.assertTrue(quarantine.contains(self.item))
+        events_before_retry = self.db.conn.execute(
+            "SELECT COUNT(*) FROM state_events WHERE content_id=?", (self.item,)
+        ).fetchone()[0]
+
+        Recovery(self.db, self.storage, vision, studio, publisher).reconcile(self.item)
+
+        events_after_retry = self.db.conn.execute(
+            "SELECT COUNT(*) FROM state_events WHERE content_id=?", (self.item,)
+        ).fetchone()[0]
+        self.assertEqual(events_after_retry, events_before_retry)
+        self.assertEqual(self.db.get(self.item).recovery_count, 0)
+        self.assertEqual(publisher.count, 0)
+
+    def test_sent_unverified_publication_is_quarantined_without_recovery_retry_loop(self):
+        self.db.publication_started(
+            self.item, destination_chat_id="-1004341972306", destination_topic_id=228
+        )
+        self.db.publication_send_started(self.item)
+        self.db.transition(self.item, State.RECOVERY, "simulated-telegram-send-timeout")
+        recovery = Recovery(
+            self.db, self.storage, Vision(), Studio(self.storage), self.pub
+        )
+        quarantine = PublicationQuarantine(
+            self.storage.database / "publication-quarantine.sqlite3"
+        )
+
+        recovery.reconcile(self.item)
+        first_event_count = self.db.conn.execute(
+            "SELECT COUNT(*) FROM state_events WHERE content_id=?", (self.item,)
+        ).fetchone()[0]
+        first_recovery_count = self.db.get(self.item).recovery_count
+
+        recovery.reconcile(self.item)
+
+        self.assertTrue(quarantine.contains(self.item))
+        self.assertEqual(self.db.get(self.item).state, State.RECOVERY)
+        self.assertEqual(self.db.get(self.item).recovery_count, first_recovery_count)
+        self.assertEqual(
+            self.db.conn.execute(
+                "SELECT COUNT(*) FROM state_events WHERE content_id=?", (self.item,)
+            ).fetchone()[0],
+            first_event_count,
+        )
+        self.assertEqual(self.pub.count, 0)
 
     def test_cleanup_is_idempotent(self):
         Pipeline(self.db, self.storage, Vision(), Studio(self.storage), self.pub).run(self.item)

@@ -4,7 +4,9 @@ Aplicação local integrada para descobrir vídeos nas três fontes Telegram, va
 
 **Fluxo:** Sync → Vision → Stock → IA → Speech → Studio → Hub.
 
-O `START_ALL.bat` é o único ponto de entrada operacional. Sem argumentos, executa o preflight seguro; a operação exige os argumentos e os limites descritos no documento mestre.
+As legendas usam um gerador local baseado no contexto aprovado pela Vision e passam pela Policy compartilhada. O fluxo padrão não chama Ollama nem Gemini; quando o título não sustenta uma frase factual segura, usa uma legenda neutra curta para não travar a esteira. Nesses casos, a validação formal não garante a mesma especificidade editorial.
+
+O `START_ALL.bat` é o único ponto de entrada operacional. Sem argumentos, executa o preflight seguro. Para processar a coleta histórica sem teto diário e depois permanecer em LIVE, use `--continuous --publish --continuous-operation-id historico-live --max-items-per-batch 25`, mantendo o mesmo identificador ao retomar. O tamanho do lote define apenas pontos de retomada; não limita o total processado, e o processamento pesado continua serial.
 
 ## Instalação
 

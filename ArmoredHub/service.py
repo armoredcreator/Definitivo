@@ -20,6 +20,7 @@ from armored_core.republication_ledger import VersionedPublicationLedger
 from armored_core.publication_quarantine import PublicationQuarantine
 from armored_core.telegram_session import telegram_session_basename
 from ArmoredIA.caption.policy import CaptionPolicyError, validate_caption
+from ArmoredIA.caption.selector import caption_policy_context_for
 
 
 class ArmoredHub:
@@ -624,11 +625,16 @@ class ArmoredHub:
     @staticmethod
     def _validated_caption(item: Item, caption: str) -> str:
         raw = str(caption or "").strip()
+        context = caption_policy_context_for(
+            raw,
+            product_name=str(item.affiliate_name or ""),
+            product_context=item.ia_context or {},
+        )
         try:
             canonical = validate_caption(
                 raw,
                 product_name=str(item.affiliate_name or ""),
-                product_context=item.ia_context or {},
+                product_context=context,
             )
         except CaptionPolicyError as exc:
             raise RuntimeError(f"Hub recusou legenda fora da Policy ArmoredIA: {exc}") from exc
@@ -637,9 +643,15 @@ class ArmoredHub:
         return canonical
 
     @classmethod
-    def _publication_text(cls, item: Item, *, caption_override: str | None = None) -> str:
-        links = list(item.affiliate_urls or ())
-        if not links and item.affiliate_url:
+    def _publication_text(
+        cls,
+        item: Item,
+        *,
+        caption_override: str | None = None,
+        links_override: tuple[str, ...] | list[str] | None = None,
+    ) -> str:
+        links = list(item.affiliate_urls or ()) if links_override is None else list(links_override)
+        if not links and item.affiliate_url and links_override is None:
             links = [str(item.affiliate_url).strip()]
         links = list(dict.fromkeys(str(link).strip() for link in links if str(link).strip()))[:7]
         raw_caption = (
@@ -967,6 +979,108 @@ class ArmoredHub:
             raise RuntimeError("Hub recebeu resultado inexistente/vazio")
 
         return self._publish_telegram(item, output)
+
+    def edit_confirmed_caption(
+        self,
+        item_id: str,
+        caption: str,
+        *,
+        affiliate_links: tuple[str, ...] | list[str] | None = None,
+    ):
+        """Edit only the caption of the exact existing, confirmed publication.
+
+        This maintenance operation cannot send media or change its destination.
+        Its caller must durably record the edit intent before invoking Telegram.
+        """
+        if self.db is None:
+            raise RuntimeError("caption-edit-requires-database")
+        item = self.db.get(str(item_id))
+        publication = self._publication(item)
+        if item.state is not State.PUBLISHED:
+            raise RuntimeError("caption-edit-requires-published-item")
+        if (
+            publication is None
+            or not bool(publication["confirmed"])
+            or str(publication["verification_status"] or "").upper() != "CONFIRMED"
+            or not str(publication["published_message_id"] or "").strip()
+        ):
+            raise RuntimeError("caption-edit-requires-confirmed-publication-receipt")
+        expected_routes = {
+            "-1003788989075": ("-1004341972306", 228),
+            "-1002698134896": ("-1004341972306", 1160),
+            "-1002039708059": ("-1004341972306", 1327),
+        }
+        expected = expected_routes.get(str(item.source_id))
+        destination = (
+            str(publication["destination_chat_id"] or ""),
+            int(publication["destination_topic_id"] or 0),
+        )
+        if expected is None or destination != expected:
+            raise RuntimeError("caption-edit-refuses-noncontract-publication-route")
+        self._assert_not_quarantined(item)
+        self._assert_test_destination_lock(item)
+        final_caption = self._publication_text(
+            item,
+            caption_override=str(caption or ""),
+            links_override=affiliate_links,
+        )
+        token = (os.getenv("ARMORED_CREATOR_BOT_TOKEN") or "").strip()
+        if not token:
+            raise RuntimeError("Telegram Hub exige ARMORED_CREATOR_BOT_TOKEN")
+        base_url, file_url = self._require_local_bot_api()
+
+        try:
+            from telegram import Bot
+            from telegram.request import HTTPXRequest
+        except ImportError as exc:
+            raise RuntimeError("Dependência python-telegram-bot ausente") from exc
+
+        request = HTTPXRequest(
+            connection_pool_size=1,
+            connect_timeout=float(os.getenv("ARMORED_TELEGRAM_CONNECT_TIMEOUT", "15")),
+            read_timeout=float(os.getenv("ARMORED_TELEGRAM_READ_TIMEOUT", "60")),
+            write_timeout=float(os.getenv("ARMORED_TELEGRAM_WRITE_TIMEOUT", "180")),
+            pool_timeout=float(os.getenv("ARMORED_TELEGRAM_POOL_TIMEOUT", "15")),
+        )
+
+        async def edit():
+            bot = Bot(
+                token=token,
+                request=request,
+                base_url=base_url,
+                base_file_url=file_url,
+            )
+            try:
+                return await bot.edit_message_caption(
+                    chat_id=int(destination[0]),
+                    message_id=int(publication["published_message_id"]),
+                    caption=final_caption,
+                    parse_mode=None,
+                    caption_entities=None,
+                )
+            finally:
+                await bot.shutdown()
+
+        message = self._run_async(edit())
+        returned_chat = getattr(getattr(message, "chat", None), "id", None)
+        returned_message = getattr(message, "message_id", None)
+        returned_topic = getattr(message, "message_thread_id", None)
+        returned_caption = str(getattr(message, "caption", None) or "")
+        if (
+            str(returned_chat) != destination[0]
+            or str(returned_message) != str(publication["published_message_id"])
+            or int(returned_topic or 0) != destination[1]
+            or returned_caption != final_caption
+            or not (getattr(message, "video", None) or getattr(message, "document", None))
+        ):
+            raise RuntimeError("Telegram caption edit response failed identity/media verification")
+        return {
+            "content_id": item.content_id,
+            "message_id": str(returned_message),
+            "chat_id": str(returned_chat),
+            "topic_id": int(returned_topic),
+            "caption": returned_caption,
+        }
 
     @staticmethod
     def _video_metadata(output: Path) -> tuple[int, int, int]:

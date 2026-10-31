@@ -19,6 +19,7 @@ from .storage import Storage
 from .trace import PipelineTrace
 from .publication_quarantine import PublicationQuarantine
 from ArmoredIA.caption.policy import CaptionPolicyError, validate_caption
+from ArmoredIA.caption.selector import CaptionSelector
 
 
 def _provider_request_count(result_or_error, provider) -> int:
@@ -62,15 +63,74 @@ class Pipeline:
         raw = str(caption or "").strip()
         if not raw or not item.affiliate_name:
             return False
+        context = dict(item.ia_context or {})
+        context.pop("__previous_caption_to_avoid", None)
+        product_name = str(item.affiliate_name)
         try:
             canonical = validate_caption(
                 raw,
-                product_name=str(item.affiliate_name),
-                product_context=item.ia_context or {},
+                product_name=product_name,
+                product_context=context,
             )
         except CaptionPolicyError:
+            canonical = None
+        if canonical == raw:
+            return True
+
+        # The deterministic composer can make a short neutral caption from a
+        # title even when it has no safe factual detail. Its exact output gets
+        # private evidence in CaptionSelector; reuse that proof at the Hub
+        # boundary without trusting arbitrary context fields or weakening the
+        # Policy for other captions.
+        local_title = str(context.get("productName") or product_name)
+        from ArmoredIA.caption.title_rules import (
+            compose_neutral_caption_fallback,
+            compose_title_rule_caption,
+            title_rules_enabled,
+        )
+        neutral = compose_neutral_caption_fallback({**context, "productName": local_title})
+        rule = (
+            compose_title_rule_caption({**context, "productName": local_title})
+            if title_rules_enabled() else None
+        )
+        if not (neutral and neutral.full_caption == raw) and not (
+            rule and rule.full_caption == raw
+        ):
             return False
-        return canonical == raw
+        evaluation = CaptionSelector().evaluate(
+            [raw],
+            product_name=local_title,
+            product_context={**context, "productName": local_title},
+        )[0]
+        return evaluation.policy_valid and evaluation.caption == raw
+
+    def _quarantine_unknown_publication(self, item_id: str, reason: str) -> None:
+        """Persist the no-replay fence as soon as a Telegram result is unclear."""
+        publication = self.db.publication(item_id)
+        if publication is None:
+            return
+        if bool(publication["confirmed"]) or str(
+            publication["verification_status"] or ""
+        ).strip().upper() == "CONFIRMED":
+            return
+        # A durable Telegram message ID gives Recovery a precise read-only
+        # reconciliation target. Let it verify that ID first; only fence
+        # immediately when the send outcome has no targetable message ID.
+        if str(publication["published_message_id"] or "").strip():
+            return
+        item = self.db.get(item_id)
+        self.publication_quarantine.quarantine_unknown(
+            item_id,
+            publication,
+            evidence={
+                "item_state": item.state.value,
+                "last_state_event": (
+                    dict(self.db.last_state_event(item_id))
+                    if self.db.last_state_event(item_id) else None
+                ),
+                "reason": str(reason),
+            },
+        )
 
     def _ensure_publication_caption(self, item_id: str) -> bool:
         """Recover a missing Hub caption once from approved IA evidence, before send."""
@@ -135,7 +195,11 @@ class Pipeline:
             self.db.finish_caption_recovery(item_id, status="BLOCKED", reason="armored-ia-service-not-configured")
             return False
 
-        claim = self.db.claim_caption_recovery(item_id, previous_caption=raw_caption or None)
+        claim = self.db.claim_caption_recovery(
+            item_id,
+            previous_caption=raw_caption or None,
+            retry_stale_success=True,
+        )
         if claim != "STARTED":
             self.trace.emit(item_id, "HUB", "CAPTION_RECOVERY_BLOCKED", reason=claim.casefold())
             return False
@@ -605,6 +669,9 @@ class Pipeline:
                             )
                             return
                         except PublicationUnknownError as exc:
+                            self._quarantine_unknown_publication(
+                                item_id, "hub-publish-once-returned-unknown",
+                            )
                             self.db.transition(item_id, State.RECOVERY, str(exc))
                             self.trace.emit(item_id, "HUB", "UNKNOWN", reason=str(exc), new_state=State.RECOVERY.value)
                             return
@@ -620,6 +687,9 @@ class Pipeline:
                         check = self.publisher.check_publication(item)
                         self.trace.emit(item_id, "HUB", "CHECK", result=check.value)
                         if check == PublicationCheck.UNKNOWN:
+                            self._quarantine_unknown_publication(
+                                item_id, "hub-publication-check-returned-unknown",
+                            )
                             self.db.transition(
                                 item_id,
                                 State.RECOVERY,
@@ -632,6 +702,9 @@ class Pipeline:
                             try:
                                 result = self.publisher.publish(item)
                             except PublicationUnknownError as exc:
+                                self._quarantine_unknown_publication(
+                                    item_id, "hub-publish-returned-unknown",
+                                )
                                 self.db.transition(item_id, State.RECOVERY, str(exc))
                                 self.trace.emit(item_id, "TELEGRAM", "UNKNOWN", reason=str(exc), new_state=State.RECOVERY.value)
                                 return
@@ -667,6 +740,13 @@ class Pipeline:
             if current.state == State.PUBLISHED:
                 self.trace.emit(item_id, "PIPELINE", "ERROR_AFTER_PUBLISH", error_type=type(exc).__name__, error=str(exc))
                 raise
+            publication = self.db.publication(item_id)
+            if publication is not None and str(
+                publication["verification_status"] or ""
+            ).strip().upper() in {"SENT_UNVERIFIED", "UNKNOWN", "SENDING"}:
+                self._quarantine_unknown_publication(
+                    item_id, "pipeline-error-after-telegram-send-boundary",
+                )
             if self._shutdown_checker():
                 self.log.warning(
                     "[PIPELINE][ITEM %s] shutdown solicitado; preservando state=%s para recovery: %s",

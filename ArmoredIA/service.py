@@ -16,8 +16,7 @@ class ArmoredIA:
         return self.caption_generator.generate(product_context)
 
     def provider_configuration(self) -> dict:
-        configuration = getattr(self.caption_generator.provider, "configuration", None)
-        return configuration() if callable(configuration) else {"provider": "custom", "model": None}
+        return {"provider": "local", "model": "deterministic-caption-rules"}
 
     def generate_caption_with_evidence(self, product_context: dict[str, Any]):
         return self.caption_generator.generate_with_evidence(product_context)

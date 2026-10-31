@@ -15,9 +15,9 @@ Não são usados Redis, RabbitMQ, Celery ou filas físicas. O SQLite guarda esta
 | Módulo | Responsabilidade |
 | --- | --- |
 | ArmoredSync | Três fontes Telegram, descoberta, relação entre mensagem/vídeo/link, metadados e checkpoints. Não baixa mídia na descoberta. |
-| ArmoredVision | Resolver produto/oferta, identidade Shopee, link afiliado, contexto de produto, aprovação e orçamento persistente. Consultas reais só com autorização e quota configuradas. |
+| ArmoredVision | Resolver produto/oferta, identidade Shopee, link afiliado, contexto de produto e aprovação. Consultas são feitas para produtos exatos necessários à fila; a API da Shopee continua podendo impor sua própria taxa/quota. |
 | ArmoredStock | Materializar o original de um único item aprovado, criar workspace, validar arquivo e SHA-256. |
-| ArmoredIA | Gerar legenda editorial brasileira usando Ollama local como padrão; Gemini é opcional. Normalizar e avaliar sentido, contexto e hashtags; a legenda aprovada contém exatamente um 🧡 no início. |
+| ArmoredIA | Gerar legendas editoriais localmente a partir de regras e fatos persistidos pela Vision, sem depender de Ollama ou Gemini. Validar sentido, contexto e hashtags; a legenda aprovada contém exatamente um 🧡 no início. |
 | ArmoredSpeech | Único dono de extração, classificação de áudio, decisão de rota, RVC Melody, efeitos, volumes e trilha final. `PT_BR_NARRATION → RVC Melody`; música/idioma estrangeiro/sem áudio seguem a política aprovada de silenciar o original e aplicar efeito. |
 | ArmoredStudio | Apenas análise/tratamento visual, crop 9:16, montagem MP4 e integração da trilha final do Speech. Não classifica áudio nem executa RVC; FFprobe valida o resultado. |
 | ArmoredHub | Publicar somente pelo comando explícito, persistir recibo e reconciliar resultado. Nenhum envio real acontece no preflight. |
@@ -30,7 +30,7 @@ Vision aprovado é representado pelo item `RECEIVED` com `affiliate_url` persist
 
 A primeira migração havia reencaminhado **23 itens** (15 `PUBLISHED`, 5 `PUBLISHING`, 3 `RECOVERY`) e limpado referências derivadas; o backup original preservou os estados e evidências anteriores. A correção foi aplicada somente na cópia nova em 24/10/2026 e alterou 22 estados: 15 `PUBLISHED`, 7 `RECOVERY`; o item restante, `RECOVERY` sem recibo e sem histórico de envio, continuou em `RECEIVED`. Os 20 recibos e todos os eventos anteriores permanecem preservados; nada foi apagado dos tópicos. As correções são idempotentes, registradas em `migration_audit` e precedidas por backups consistentes do SQLite.
 
-O histórico de publicação não autoriza apagar mensagens de tópicos. O código não executa exclusão de mensagens, não envia Telegram no START/preflight e não faz buscas Shopee sem quota autorizada. Itens em quarentena continuam bloqueados até reconciliação apropriada.
+O histórico de publicação não autoriza apagar mensagens de tópicos. O código não executa exclusão de mensagens nem envia Telegram no START/preflight. Itens em quarentena continuam bloqueados até reconciliação apropriada.
 
 ## Banco e preservação
 
@@ -74,7 +74,7 @@ As associações são fixas e também são impostas pelo validador de configura�
 | `-1002698134896` | `-1004341972306` | 1160 |
 | `-1002039708059` | `-1004341972306` | 1327 |
 
-`START_ALL.bat` sem argumento executa preflight e validação de configuração. `--run` ou `--continuous` inicia o Coordinator; Hub real requer o comando/opção explícita de publicação do CLI. Consultas comerciais também dependem da flag, autorização estável, orçamento, evidência e validade. O programa não deve inferir autorização a partir de credenciais presentes.
+`START_ALL.bat` sem argumento executa preflight e validação de configuração. `--run` faz um lote único e limitado; `--continuous` processa a coleta histórica em lotes retomáveis, sem limite diário de itens, e permanece em LIVE depois que a varredura histórica e a fila elegível terminam. O tamanho do lote é somente uma fronteira de checkpoint, não um teto total. Hub real requer `--publish`. Vision não usa orçamento temporário local; erros de taxa ou quota devolvidos pela própria Shopee continuam sendo respeitados.
 
 ## Operação e recovery
 
@@ -84,11 +84,26 @@ Não apague `.part`, arquivos de resultado, recibos, quarentenas ou checkpoints 
 
 ## Recursos do notebook
 
-O limite de produção é estrito: um vídeo por vez, sem paralelo de FFmpeg, separação vocal, RVC ou render. Downloads de produção também são seriais. Descoberta e classificação leve podem continuar em segundo plano, desde que não baixem mídia nem disputem CPU/memória dos modelos. Limites de lote, tempo e orçamento são persistidos e configuráveis; aumentos exigem medição no notebook.
+O limite de concorrência de produção é estrito: um vídeo por vez, sem paralelo de FFmpeg, separação vocal, RVC ou render. Downloads de produção também são seriais. Descoberta e classificação leve podem continuar em segundo plano, desde que não baixem mídia nem disputem CPU/memória dos modelos. A operação contínua não tem teto diário de itens; lotes persistidos permitem retomada sem interromper o catch-up à meia-noite.
 
 ## START ALL
 
-`START_ALL.bat` é o único ponto de entrada de usuário. Confere `.venv` 3.11.9, credenciais e preflight dos módulos/runtime; por padrão valida, sem iniciar produção, Bot API, buscas Shopee ou publicação. O launcher do Coordinator e as ferramentas de auditoria ficam em `scripts/` e são componentes internos, não atalhos de produção.
+`START_ALL.bat` é o único ponto de entrada de usuário. Confere `.venv` 3.11.9, credenciais e preflight dos módulos/runtime; sem argumentos, não inicia produção nem publicação. Para continuar até concluir o histórico e seguir em LIVE, no PowerShell use:
+
+```powershell
+Set-Location 'C:\Users\Administrador\Downloads\Definitivo'
+.\START_ALL.bat --continuous --publish --continuous-operation-id historico-live-20261025
+```
+
+### Validação de legendas locais — 26/10/2026
+
+O provedor operacional de legendas foi alinhado ao Ollama local com `qwen2.5:1.5b`, adequado à memória limitada do notebook. A saída estruturada deixou de impor uma lista rígida de palavras ao texto gerado: essa restrição fazia o modelo preencher a frase com termos desconexos. O esquema agora limita o tamanho; a Policy compartilhada continua validando suporte no contexto Vision, tom, texto e hashtags.
+
+Foi ampliada a extração de fatos curtos da Vision para cobrir atributos estruturados além das expressões já conhecidas. Quando o Qwen ou a Policy não produzem uma candidata válida, o gerador pode usar apenas um fragmento literal da Vision e uma hashtag de categoria; sem fato confiável, a geração falha de forma segura.
+
+Ensaio local real no notebook, sem chamadas externas e sem publicação: o prompt Ollama foi simplificado para um detalhe curto da Vision e JSON simples. O Qwen 2.5 1.5B gerou diretamente 3 de 3 legendas em categorias diferentes e todas passaram pela Policy: “Divisórias modulares” (`#organizador`), “Braço articulado” (`#luminaria`) e “Manga curta” (`#camiseta`). Cada item usou uma chamada local, entre 4,7 e 10,5 segundos; nenhum fallback foi selecionado. A Policy reconhece `camiseta` como categoria e preserva essa hashtag validada. A validação automatizada direcionada a legendas/Ollama passou com 104 testes, 0 falhas. A suíte geral passou com 811 aprovados e 4 ignorados, excluído somente `test_startup_preserves_interrupted_download_before_rediscovery`, que continua pendente. Este ensaio de legendas não certifica o fluxo Telegram/Speech/Studio.
+
+O tamanho interno padrão dos lotes é 25 itens; ele não limita o total. O Coordinator ainda processa um vídeo pesado por vez. `--publish` habilita envios reais aos tópicos configurados. Se o processo fechar, execute novamente o mesmo comando e o mesmo ID para retomar os checkpoints. O launcher do Coordinator e as ferramentas de auditoria ficam em `scripts/` e são componentes internos, não atalhos de produção.
 
 ## Validação de entrega
 
@@ -112,7 +127,7 @@ O projeto só deve ser declarado pronto quando a validação integrada e a insta
 
 ### Legendas ArmoredIA
 
-A primeira linha da legenda deve começar por um único coração laranja (`🧡`), seguido por uma descrição curta e natural do produto. A normalização pode corrigir posição e duplicidade do coração, espaços e formato das hashtags, mas a Policy também avalia coerência com o contexto aprovado, português brasileiro, alegações não comprovadas e pertinência das hashtags. Rejeições acionam nova tentativa limitada; não se aprova texto só por cumprir formatação.
+A primeira linha da legenda deve começar por um único coração laranja (`🧡`), seguido por uma observação curta, natural e baseada em um fato confirmado pela Vision. Não é necessário declarar benefício. Mencionar o nome comum ou a categoria do produto é opcional: só deve acontecer quando deixar a frase mais clara e continuar natural. Não se força uma abertura fixa nem se conectam atributos sem relação confirmada. A normalização pode corrigir posição e duplicidade do coração, espaços e formato das hashtags, mas a Policy também avalia coerência com o contexto aprovado, português brasileiro, alegações não comprovadas e pertinência das hashtags. Rejeições acionam nova tentativa limitada; não se aprova texto só por cumprir formatação.
 
 ### Pipeline de áudio e vídeo
 
@@ -214,3 +229,81 @@ A auditoria dos 26 itens publicados e dos sete registros Speech previamente eleg
 A mídia da mensagem Telegram `1369` foi substituída no mesmo chat e tópico (`-1004341972306`, tópico `1327`), sem novo envio. A edição preservou a legenda e o link afiliado. O arquivo efetivo usa H.264/AAC, 1080×1920, proporção 9:16; o Bot API respondeu com dimensões 1080×1920. O quadro extraído confirma que a imagem ocupa a tela vertical. O resultado local persistido aponta para a versão sem narração e com efeito sonoro. Backup do banco principal anterior à atualização: `storage/backups/armoredcreator-before-1369-effect-only-20261025-193801.sqlite3`.
 
 A base congelada confirma o contrato visual de saída 1080×1920, mantendo a proporção e aplicando crop quando necessário; essa regra foi seguida nesta correção. As saídas locais disponíveis de todos os itens publicados também foram verificadas com FFprobe: 11 de 11 estão em 1080×1920 (9:16). O `ModelProcessor` executado sobre o original 12046 confirmou `PT_BR_NARRATION_UNSUITABLE`, `speech_rate_wpm=373.1` e `rvc_eligible=false`. A suíte completa passou localmente com 802 aprovados, 4 ignorados e 0 falhas; `START_ALL.bat` aprovou Audio Preflight, composição dos sete módulos, SQLite e configuração das três fontes/rotas. No GitHub, o CI principal do commit `4d14ed0` concluiu com sucesso (run `40241607053`), assim como o diagnóstico real de áudio (run `40241607045`). Esta correção não fecha os requisitos remanescentes de operação prolongada e portabilidade em outro computador, descritos acima.
+
+### Atualização operacional — execução contínua sem teto diário
+
+O modo contínuo agora usa lotes persistidos somente como fronteiras de retomada. Não existe limite diário de itens; com `--publish`, a execução processa a coleta histórica elegível até os três históricos terminarem e então segue monitorando as fontes em LIVE. O processamento pesado permanece serial, um vídeo por vez. Itens sem link/oferta utilizável podem permanecer em `WAITING_VISION`, e respostas de rate limit/quota da própria Shopee continuam sendo respeitadas.
+
+O orçamento local de consultas Shopee usado em ensaios anteriores não é mais exigido nem controla Vision. Os registros SQLite antigos foram mantidos como histórico; o runtime não os consulta. O parâmetro `--max-items-per-day` foi removido. Para iniciar ou retomar a operação real, use o mesmo `--continuous-operation-id` e `--publish`:
+
+```powershell
+Set-Location 'C:\Users\Administrador\Downloads\Definitivo'
+.\START_ALL.bat --continuous --publish --continuous-operation-id historico-live-20261025
+```
+
+### Reavaliação de entrega e legendas — 28/10/2026
+
+Esta seção registra a auditoria mais recente do checkout operacional. Ela substitui qualquer conclusão anterior de que a entrega estaria pronta; o contrato permanece aberto.
+
+| Área | Evidência atual | Pendência |
+| --- | --- | --- |
+| Publicações e legendas | Há 79 recibos confirmados no banco. A reavaliação pela Policy presente no checkout encontrou 15 legendas reprovadas: mensagens 1397, 1405, 1412, 1413, 1419, 1420, 1424, 1430–1437. Outras 64 passam pelo filtro formal, sem garantia de naturalidade ou aderência semântica. | Nenhuma legenda antiga foi editada; todas continuam aguardando revisão. A mensagem 1431 permanece com `#chinelo` para uma pantufa. A revisão deve também cobrir 1384 e as mensagens 1432–1438, que não estão no material anterior. |
+| Falsos aprovados observados | A mensagem 1437 expõe “Miriam” e contém frase promocional/confusa; 1432 usa `#Fino` sem identificar o produto; 1435 usa nome de linha e frase pouco clara. A mensagem 1364 (“O display digital”) parece fragmentária; 1408 usa `#cano` para meias. | A aprovação formal não deve ser tratada como aprovação editorial. A Policy agora exige uma hashtag correspondente à categoria principal conhecida e rejeita rótulos nominais incompletos sem predicado. O gerador prioriza legendas locais compostas de fatos Vision; Qwen fica como alternativa quando não há fallback seguro. As alterações ainda precisam de validação direcionada e avaliação editorial das frases, marcas/linhas e demais tags. |
+| Opções locais | Na reavaliação informada em 28/10 do material gerado pelo Qwen para 71 produtos, 25 opções passam pela Policy em 21 produtos; 50 produtos não têm opção aprovada nesse material. Doze tentativas de feedback ficaram adiadas. | O relatório anterior não certifica cobertura total nem correção de todas as publicações. Regerar/revisar os itens sem candidata válida, incluindo os ausentes do relatório. |
+| Inicialização e fluxo integrado | `START_ALL.bat` passou preflight de áudio, composição dos sete módulos, configuração das três fontes/rotas e autenticação Bot API em modo contínuo com publicação. O item do óleo percorreu IA, Speech, Studio e Hub; a mensagem 1438 foi confirmada no tópico 228 com `🧡 Nutrição em óleo #oleo`. A suíte focada em legendas/provedores passou com 224 testes. | Um fluxo concluído demonstra integração nesse item, não qualidade consistente do Qwen nem operação contínua confiável. |
+| Recovery de IA | O item 422 acumulou 28 tentativas de recuperação antes de voltar à IA. O item 424 teve dez opções rejeitadas e retornou à IA. | Corrigir e comprovar limite/espera de retries para impedir repetição que prenda itens. |
+| Integridade e histórico | O banco principal passou `integrity_check`, com zero violações de chave estrangeira. As 19.966 identidades do backup histórico aparecem no banco atual, que contém 21.087 itens; 5.480 duplicados também têm registro de arquivamento. | A reconciliação de todos os campos históricos ainda não terminou. |
+| Código e entrega | O `HEAD` local coincide com `main` em `333309da`, cujo CI passou. O checkout contém 62 alterações locais que não estão cobertas por esse CI. | Revisar/sincronizar alterações locais e obter CI para a revisão que será entregue. Instalação em outra máquina e operação prolongada continuam sem certificação. |
+
+#### Estado das 15 fases
+
+| Fases | Situação em 28/10/2026 |
+| --- | --- |
+| 1. Preservação histórica | Integridade e presença das 19.966 identidades confirmadas; reconciliação completa de campos pendente. |
+| 2–4. Arquitetura, deduplicação e sete módulos | Implementados; preflight e um fluxo real completos passaram. Descoberta ao vivo e processamento independente nas três fontes não foram certificados em conjunto. |
+| 5–6. Python e Bot API | Validados localmente pelo START. |
+| 7–8. Organização e portabilidade | Pendentes: 34 arquivos em `runtime/reports`, referências antigas em scripts/exemplos e nenhuma instalação em outro computador. |
+| 9. Recovery | Não certificado: 422 repetiu 28 recuperações e 424 retornou a uma falha de IA. |
+| 10. Desempenho | Um item usou RVC em CPU e chegou ao Studio; ensaio prolongado de carga no notebook pendente. |
+| 11. GitHub e checkout | `HEAD` coincide com `main` em `333309da` e o CI desse commit passou; 62 alterações locais não estão incluídas. |
+| 12–13. Integração e START | START passou pelo preflight e um item completou o fluxo; repetição na IA impede certificar operação contínua confiável. |
+| 14–15. Documento e entrega | Este registro atualiza a evidência disponível. Auditoria/revisão de legendas, recovery, sincronização das alterações, instalação limpa, operação prolongada e certificação final continuam pendentes. |
+
+Evidências e referências fornecidas para esta atualização: relatório de opções em `storage/validation/published-caption-options-parallel-20261028.md`; commit `333309da85bb6ba301ea8290560e97c97ae9ad6a`; CI `40242044615`. Os totais acima refletem a reavaliação atual informada em 28/10 e não os números de uma captura local anterior do relatório. Nenhuma mensagem Telegram foi modificada durante esta atualização documental.
+
+### Gerador local de legendas — 29/10/2026
+
+O fluxo operacional de IA foi alterado para não instanciar nem chamar Ollama ou Gemini. O `START_ALL.bat` ativa as regras locais; o gerador tenta primeiro fatos e regras determinísticas baseados no contexto persistido pela Vision e valida a legenda pela Policy compartilhada. Quando o registro não contém evidência suficiente, escolhe um fallback neutro curto para permitir que o item continue. A Policy aceita o formato e a evidência privada apenas para a saída exata do compositor local.
+
+| Verificação | Resultado observado |
+| --- | --- |
+| Replay somente leitura do SQLite operacional | 8.261 itens aprovados pela Vision, com título, e fora de `DUPLICATE` foram processados; distribuição: 8.181 `RECEIVED`, 79 `PUBLISHED` e 1 `RECOVERY`. Os 5.991 duplicados foram excluídos. Nenhum banco foi gravado. |
+| Policy e provedores | 8.261/8.261 saídas selecionadas passaram pela Policy; 0 erros e 0 chamadas a provedores externos. |
+| Tipo de saída | No replay final, 1.446 saídas combinaram produto e detalhe extraído do contexto no formato das amostras, 460 vieram do compositor factual e 6.355 foram fallback neutro. Os 1.446 casos não foram todos aprovados editorialmente um a um. |
+| Categorias/hashtags | 6.509 registros tiveram uma categoria reconhecida pelo vocabulário local; 1.752 continuam sem categoria reconhecida. Títulos sem categoria ou com texto insuficiente continuam sendo uma limitação concreta. |
+| Enriquecimento de categoria via Shopee | 325 consultas registradas no orçamento persistente: 315 retornaram `productCatIds`, 9 não encontraram o produto e 1 foi limitada pela API. Os resultados estão no sidecar `work/caption-product-categories.jsonl`; não foram incorporados ao SQLite nem usados no replay. A coleta parou ao receber rate limit. |
+| Publicações existentes | A simulação gerou texto diferente para 75 dos 79 registros `PUBLISHED`. Nenhuma mensagem Telegram foi editada nesta verificação. As novas legendas precisam ser apresentadas para revisão antes de qualquer edição. |
+| Testes focados | 274 testes de legendas, Policy, integração IA/Coordinator e regressões passaram; 0 falhas. A bateria incluiu exemplos no estilo das legendas listadas pelo usuário e casos de títulos ambíguos. |
+
+O estilo de produto + detalhe reproduz as amostras de referência e os exemplos direcionados passaram pela Policy. No replay final, 6.355 itens ainda recebem fallback neutro; eles não correspondem ao formato específico das amostras. A simulação aponta mudança para 75 das 79 legendas publicadas. Nenhuma mensagem Telegram foi editada. A revisão semântica das novas legendas e a aprovação das publicações continuam pendentes. Este trabalho está apenas no checkout local e ainda não foi sincronizado com o GitHub nem passou pelo CI remoto.
+
+### Certificação operacional — 31/10/2026
+
+Este retrato substitui as contagens operacionais anteriores; os registros datados acima permanecem como histórico. Horário do retrato do SQLite: 08:35, horário de Brasília.
+
+| Verificação | Resultado observado |
+| --- | --- |
+| Testes locais | 1.065 aprovados, 4 ignorados, 0 falhas; a última regressão isolada de legenda também passou. O checkout continua modificado localmente, portanto esse resultado ainda não corresponde a um commit remoto. |
+| START_ALL | Preflight completo aprovado: Python 3.11.9, Speech/RVC, composição dos módulos, três fontes e rotas, credenciais presentes sem exibição e Bot API local pronta. A operação contínua `historico-live-20261025` foi reiniciada e continua ativa. |
+| SQLite principal | 21.087 itens: 5.991 `DUPLICATE`, 8.832 `RECEIVED`, 6.170 `WAITING_VISION`, 93 `PUBLISHED` e 1 em `SPEECH`. Os 5.991 duplicados têm referência canônica; não há referências pendentes. |
+| Recibos e rotas | 93/93 recibos confirmados, nenhum envio ambíguo. Rota 228: 86; rota 1160: 2; rota 1327: 5; todos no chat `-1004341972306`. |
+| Replay das legendas publicadas | O gerador local atual reprocessou 93/93 registros somente para leitura. 93/93 foram aprovados pela Policy, 0 chamadas externas e 0 diferenças entre a legenda persistida e a saída atual. Evidência: `storage/validation/published-caption-replay-20261031.json`. |
+| Edição confirmada | A publicação 1415 foi atualizada somente na legenda para `🧡 Calça jeans wide leg` / `#calca`. O próprio gerador local produziu dois candidatos aprovados e selecionou o mais específico; Telegram confirmou a edição, preservando mídia, link, chat e tópico. Relatório: `storage/validation/caption-distinction-20261031-v2.json`. |
+| Speech, Studio e Hub reais | O item `-1003788989075_454` concluiu o fluxo e foi confirmado como mensagem 1452 no tópico 228. Speech registrou narração PT-BR com música e decisão RVC elegível. O MP4 publicado foi validado por FFprobe: H.264, AAC estéreo 44,1 kHz, 1080×1920, 10 segundos. |
+| Continuidade | A execução foi interrompida com segurança após o item 454 para corrigir a legenda 1415 e reiniciada pelo `START_ALL.bat`; o item 455 retomou o fluxo e está em `SPEECH`. |
+| Histórico Vision | As três fontes ainda marcam `historical_complete=0`. Há 6.170 itens aguardando Vision porque não há autorização/orçamento persistente Shopee válido para novas consultas. O programa não contorna esse controle; continua processando os itens já aprovados. |
+| GitHub e instalação | `HEAD` local é `333309da85bb6ba301ea8290560e97c97ae9ad6a`, com alterações locais ainda não commitadas. O CI anterior não certifica essas alterações. Instalação limpa em outro computador e sincronização final com GitHub ainda não foram demonstradas. |
+
+O sistema já demonstrou que diferencia e seleciona automaticamente legendas para os exemplos publicados: `Saia com fendas laterais` e `Calça jeans wide leg`. A regra é exercitada por regressão e executada pelo `START_ALL.bat`, sem depender de revisão manual por produto. Isso não torna as legendas sempre únicas: quando o título/Vision não oferecem um detalhe confiável, o fallback factual pode ser mais simples.
+
+A entrega ponta a ponta ainda não deve ser declarada concluída. A operação histórica continua em andamento; a validação de novos produtos pela Shopee aguarda orçamento persistente válido, e o checkout final ainda precisa ser revisado, commitado, sincronizado e aprovado no CI remoto. O snapshot de desempenho observado no item 454 foi de aproximadamente 14 min 52 s desde a entrada em IA até a confirmação; é uma amostra individual, não uma medição prolongada.

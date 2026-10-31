@@ -83,7 +83,11 @@ class TelegramPublicationIdentityTests(unittest.TestCase):
                     "https://s.shopee.com.br/TEST123",
                     "https://s.shopee.com.br/CAND2",
                 ),
-                publication_caption="🧡 Casa bonita\n#casa #decoracao",
+                ia_context={
+                    "productName": "Produto para casa",
+                    "description": "um toque decorativo para casa",
+                },
+                publication_caption="🧡 Um toque para casa\n#casa #decoracao",
             )
             item = db.get(item.item_id)
             hub = ArmoredHub(Path(td), db)

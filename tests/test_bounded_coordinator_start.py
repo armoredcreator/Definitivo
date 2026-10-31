@@ -86,14 +86,14 @@ class _IA:
 
     def generate_caption(self, _context):
         self.events.append("ia")
-        return "Bancada charmosa #cozinha"
+        return "Fica suspensa #cozinha"
 
     def generate_caption_with_evidence(self, context):
         self.events.append("ia-recovery")
         product_name = str(context.get("productName") or "")
         selector = CaptionSelector()
         evaluations = selector.evaluate(
-            ["Bancada charmosa #cozinha"],
+            ["Fica suspensa #cozinha"],
             product_name=product_name,
             product_context=context,
         )

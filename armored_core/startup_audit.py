@@ -35,6 +35,23 @@ class StartupReconciler:
             roots.append((source_id, self.storage.source_workspace_root(source_id)))
         return roots
 
+    def _resolve_confirmed_quarantine(self, item_id: str, publication) -> None:
+        message_id = str(publication["published_message_id"] or "").strip()
+        if not message_id:
+            return
+        self.publication_quarantine.resolve_confirmed(
+            item_id,
+            message_id=message_id,
+            evidence={
+                "method": "telegram_exact_message_verification",
+                "checked_content_id": str(item_id),
+                "checked_message_id": message_id,
+                "confirmed": True,
+                "destination_chat_id": str(publication["destination_chat_id"] or ""),
+                "destination_topic_id": publication["destination_topic_id"],
+            },
+        )
+
     def run(self) -> dict:
         rows = self.db.conn.execute(
             "SELECT content_id,state,source_id,telegram_message_id,"
@@ -89,13 +106,37 @@ class StartupReconciler:
                     and bool(publication["published_message_id"])
                 )
                 if verified_receipt:
+                    if self.publication_quarantine.contains(item_id):
+                        # A confirmed exact Telegram receipt can close an
+                        # earlier UNKNOWN fence after a crash between the DB
+                        # confirmation and quarantine-ledger resolution.
+                        self._resolve_confirmed_quarantine(item_id, publication)
                     pub_state = f"CONFIRMED#{publication['published_message_id']}"
                 elif self.publication_quarantine.contains(item_id):
-                    # Once fenced, a historical UNKNOWN is not silently
-                    # reconciled by ordinary startup. Only the explicit
-                    # reconciliation workflow may clear that ambiguity.
-                    publication_check = "QUARANTINED"
-                    pub_state = "QUARANTINED_UNKNOWN"
+                    # If an exact Telegram message ID was persisted after the
+                    # timeout, verify that ID read-only. A positive match
+                    # closes the fence; absence still requires a complete
+                    # topic-history reconciliation.
+                    if str(publication["published_message_id"] or "").strip():
+                        publication_check = self._reconcile_publication(item_id)
+                        refreshed = self.db.publication(item_id)
+                        if (
+                            publication_check == "CONFIRMED"
+                            and refreshed is not None
+                            and bool(refreshed["confirmed"])
+                            and str(refreshed["published_message_id"] or "").strip()
+                        ):
+                            self._resolve_confirmed_quarantine(item_id, refreshed)
+                            publication = refreshed
+                            pub_state = f"CONFIRMED#{refreshed['published_message_id']}"
+                        else:
+                            publication_check = "QUARANTINED"
+                            pub_state = "QUARANTINED_UNKNOWN"
+                    else:
+                        # Without a message ID, only a complete, explicit
+                        # destination-topic scan can resolve the ambiguity.
+                        publication_check = "QUARANTINED"
+                        pub_state = "QUARANTINED_UNKNOWN"
                 elif self.db.is_reconciled_publication_generation(item_id):
                     # A complete topic-history scan archived the prior receipt
                     # and opened this PENDING generation for a fresh run. Keep

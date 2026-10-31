@@ -12,14 +12,14 @@ from armored_core.storage import Storage
 class V:
     def identify(self, item):
         return VisionResult(
-            "radio automotivo", "https://example.invalid/final",
-            ia_context={"productName": "radio automotivo"},
+            "radio automotivo com Bluetooth", "https://example.invalid/final",
+            ia_context={"productName": "radio automotivo com Bluetooth"},
         )
 
 
 class IA:
     def generate_caption(self, _context):
-        return "🧡 Radio bonito\n#radio"
+        return "🧡 Conexão Bluetooth\n#radio"
 
 class S:
     def __init__(self, storage):
@@ -59,15 +59,17 @@ class InvariantTests(unittest.TestCase):
             src.write_bytes(b"IMMUTABLE")
             i = SyncService(db, st).ingest(src, "telegram-1", original_url="https://shopee.com.br/example/original")
             original = db.get(i).original_path
-            Pipeline(db, st, V(), S(st), P(), ia=IA()).run(i)
-            self.assertEqual(original.read_bytes(), b"IMMUTABLE")
-            row = db.get(i)
-            self.assertTrue(row.result_path.is_file())
-            self.assertEqual(
-                {path.name for path in original.parent.iterdir()},
-                {original.name, row.result_path.name},
-            )
-            db.close()
+            try:
+                Pipeline(db, st, V(), S(st), P(), ia=IA()).run(i)
+                self.assertEqual(original.read_bytes(), b"IMMUTABLE")
+                row = db.get(i)
+                self.assertTrue(row.result_path.is_file())
+                self.assertEqual(
+                    {path.name for path in original.parent.iterdir()},
+                    {original.name, row.result_path.name},
+                )
+            finally:
+                db.close()
 
     def test_database_keeps_original_hash_attempts_and_recovery_metadata(self):
         with tempfile.TemporaryDirectory() as td:

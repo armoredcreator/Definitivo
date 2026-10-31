@@ -51,6 +51,14 @@ def _validate_evidence(evidence: dict, item_id: str, expected_destination: tuple
         raise ValueError(f"evidence-missing-link-codes:{item_id}")
     if evidence.get("scanned_message_count") != len(message_ids):
         raise ValueError(f"evidence-scan-count-mismatch:{item_id}")
+    receipt_status = evidence.get("exact_receipt_status")
+    receipt_id = str(evidence.get("exact_receipt_id") or "").strip()
+    if receipt_status not in {"NO_PRIOR_ID", "ABSENT"}:
+        raise ValueError(f"evidence-exact-receipt-status-invalid:{item_id}")
+    if receipt_status == "ABSENT" and not receipt_id:
+        raise ValueError(f"evidence-exact-receipt-id-required:{item_id}")
+    if receipt_status == "NO_PRIOR_ID" and receipt_id:
+        raise ValueError(f"evidence-exact-receipt-id-conflicts-with-status:{item_id}")
 
 
 def _backup_pair(root: Path, database: Path, quarantine: Path) -> tuple[Path, Path]:
@@ -134,11 +142,18 @@ def main() -> int:
             )
             current = db.get(item_id)
             if current.state == State.RECOVERY:
-                db.transition(
-                    item_id,
-                    State.RECEIVED,
-                    f"telegram-topic-absence-reconciled:{resolution_id}:return-to-stock",
+                durable_result = (
+                    current.result_path is not None
+                    and current.result_path.is_file()
+                    and db.has_speech_studio_v5_completion(item_id)
                 )
+                target = State.RECOVERY if durable_result else State.RECEIVED
+                reason = (
+                    f"telegram-topic-absence-reconciled:{resolution_id}:resume-durable-v5-result"
+                    if durable_result
+                    else f"telegram-topic-absence-reconciled:{resolution_id}:return-to-stock"
+                )
+                db.transition(item_id, target, reason)
             outcomes.append({
                 "content_id": item_id,
                 "resolution_id": resolution_id,
@@ -150,7 +165,11 @@ def main() -> int:
         report = {
             "applied_at_utc": datetime.now(timezone.utc).isoformat(),
             "evidence_file": str(evidence_path),
-            "scan_message_ids": evidence_doc.get("scanned_message_ids"),
+            "scan_message_ids": evidence_doc.get("scanned_message_ids") or [
+                message_id
+                for record in rows
+                for message_id in (record.get("scanned_message_ids") or [])
+            ],
             "backup_database": str(db_backup),
             "backup_quarantine": str(quarantine_backup),
             "outcomes": outcomes,

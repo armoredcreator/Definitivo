@@ -15,14 +15,14 @@ from coordinator_test_support import install_synthetic_speech_studio
 class _Vision:
     def identify(self, item):
         return VisionResult(
-            "radio automotivo", "https://shopee.example/affiliate",
-            ia_context={"productName": "radio automotivo"},
+            "radio automotivo com Bluetooth", "https://shopee.example/affiliate",
+            ia_context={"productName": "radio automotivo com Bluetooth"},
         )
 
 
 class _IA:
     def generate_caption(self, _context):
-        return "🧡 Radio bonito\n#radio"
+        return "🧡 Conexão Bluetooth\n#radio"
 
 
 class _Studio:
