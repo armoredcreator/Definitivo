@@ -289,21 +289,23 @@ O estilo de produto + detalhe reproduz as amostras de referência e os exemplos 
 
 ### Certificação operacional — 31/10/2026
 
-Este retrato substitui as contagens operacionais anteriores; os registros datados acima permanecem como histórico. Horário do retrato do SQLite: 08:35, horário de Brasília.
+Este retrato substitui as contagens operacionais anteriores; os registros datados acima permanecem como histórico. Horário do retrato do SQLite: 08:50, horário de Brasília.
 
 | Verificação | Resultado observado |
 | --- | --- |
-| Testes locais | 1.065 aprovados, 4 ignorados, 0 falhas; a última regressão isolada de legenda também passou. O checkout continua modificado localmente, portanto esse resultado ainda não corresponde a um commit remoto. |
-| START_ALL | Preflight completo aprovado: Python 3.11.9, Speech/RVC, composição dos módulos, três fontes e rotas, credenciais presentes sem exibição e Bot API local pronta. A operação contínua `historico-live-20261025` foi reiniciada e continua ativa. |
+| Testes locais | 1.065 aprovados, 4 ignorados, 0 falhas; a última regressão isolada de legenda também passou. |
+| CI GitHub Actions | Commit `1f16c6c2b518eb6568049654a3ddfe47700befd0` aprovado: 1.067 testes passaram, 2 foram ignorados e 0 falharam em 213,66 s. [Execução 41197870712](https://github.com/armoredcreator/Definitivo/actions/runs/41197870712). |
+| START_ALL | O preflight completo passou antes da limpeza do ambiente duplicado. Depois dela, AUDIO_PREFLIGHT passou; o preflight completo recusou a segunda instância porque o coordenador contínuo já detinha o bloqueio, como esperado. A operação `historico-live-20261025` permanece ativa. |
+| Ambiente e arquivos locais | Python 3.11.9 permanece em `.venv` na raiz. O ambiente redundante `runtime/.venv` foi removido após verificar que nenhum processo o usava. Os 41 relatórios antes em `runtime/reports` foram movidos, sem descarte, para `storage/validation/reports`. |
 | SQLite principal | 21.087 itens: 5.991 `DUPLICATE`, 8.832 `RECEIVED`, 6.170 `WAITING_VISION`, 93 `PUBLISHED` e 1 em `SPEECH`. Os 5.991 duplicados têm referência canônica; não há referências pendentes. |
 | Recibos e rotas | 93/93 recibos confirmados, nenhum envio ambíguo. Rota 228: 86; rota 1160: 2; rota 1327: 5; todos no chat `-1004341972306`. |
 | Replay das legendas publicadas | O gerador local atual reprocessou 93/93 registros somente para leitura. 93/93 foram aprovados pela Policy, 0 chamadas externas e 0 diferenças entre a legenda persistida e a saída atual. Evidência: `storage/validation/published-caption-replay-20261031.json`. |
 | Edição confirmada | A publicação 1415 foi atualizada somente na legenda para `🧡 Calça jeans wide leg` / `#calca`. O próprio gerador local produziu dois candidatos aprovados e selecionou o mais específico; Telegram confirmou a edição, preservando mídia, link, chat e tópico. Relatório: `storage/validation/caption-distinction-20261031-v2.json`. |
 | Speech, Studio e Hub reais | O item `-1003788989075_454` concluiu o fluxo e foi confirmado como mensagem 1452 no tópico 228. Speech registrou narração PT-BR com música e decisão RVC elegível. O MP4 publicado foi validado por FFprobe: H.264, AAC estéreo 44,1 kHz, 1080×1920, 10 segundos. |
-| Continuidade | A execução foi interrompida com segurança após o item 454 para corrigir a legenda 1415 e reiniciada pelo `START_ALL.bat`; o item 455 retomou o fluxo e está em `SPEECH`. |
+| Continuidade | A execução foi interrompida com segurança após o item 454 para corrigir a legenda 1415 e reiniciada pelo `START_ALL.bat`; no retrato, o item 455 avançou por `SPEECH` e está em `STUDIO_BATCH`, sem recibo de publicação ainda. |
 | Histórico Vision | As três fontes ainda marcam `historical_complete=0`. Há 6.170 itens aguardando Vision porque não há autorização/orçamento persistente Shopee válido para novas consultas. O programa não contorna esse controle; continua processando os itens já aprovados. |
-| GitHub e instalação | `HEAD` local é `333309da85bb6ba301ea8290560e97c97ae9ad6a`, com alterações locais ainda não commitadas. O CI anterior não certifica essas alterações. Instalação limpa em outro computador e sincronização final com GitHub ainda não foram demonstradas. |
+| GitHub e instalação | `main` local e remoto estão no commit `1f16c6c2b518eb6568049654a3ddfe47700befd0`; o CI desse commit passou. A instalação limpa em outro computador ainda não foi demonstrada. |
 
 O sistema já demonstrou que diferencia e seleciona automaticamente legendas para os exemplos publicados: `Saia com fendas laterais` e `Calça jeans wide leg`. A regra é exercitada por regressão e executada pelo `START_ALL.bat`, sem depender de revisão manual por produto. Isso não torna as legendas sempre únicas: quando o título/Vision não oferecem um detalhe confiável, o fallback factual pode ser mais simples.
 
-A entrega ponta a ponta ainda não deve ser declarada concluída. A operação histórica continua em andamento; a validação de novos produtos pela Shopee aguarda orçamento persistente válido, e o checkout final ainda precisa ser revisado, commitado, sincronizado e aprovado no CI remoto. O snapshot de desempenho observado no item 454 foi de aproximadamente 14 min 52 s desde a entrada em IA até a confirmação; é uma amostra individual, não uma medição prolongada.
+A entrega ponta a ponta ainda não deve ser declarada concluída. A operação histórica continua em andamento; a validação de novos produtos pela Shopee aguarda orçamento persistente válido, e instalação limpa, operação prolongada e certificação posterior ao preflight de ambiente limpo continuam pendentes. O snapshot de desempenho observado no item 454 foi de aproximadamente 14 min 52 s desde a entrada em IA até a confirmação; é uma amostra individual, não uma medição prolongada.
